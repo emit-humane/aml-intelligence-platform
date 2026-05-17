@@ -1,11 +1,16 @@
 import axios from "axios";
 import type { Alert, ScoredEvent, CommunityProfile, GraphStats, NodeInfo } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// In production (Vercel) all requests go through Next.js rewrites (/api → Render).
+// In dev, NEXT_PUBLIC_API_URL is used directly (localhost:8000).
+const IS_BROWSER = typeof window !== "undefined";
+const API_BASE = IS_BROWSER
+  ? "/api"                                                        // same-origin → Next.js rewrite → Render
+  : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"); // SSR / edge → direct
 
 const client = axios.create({
   baseURL: API_BASE,
-  timeout: 10_000,
+  timeout: 15_000,
 });
 
 // --------------------------------------------------------------------------

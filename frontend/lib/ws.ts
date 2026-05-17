@@ -2,6 +2,8 @@
 
 import type { ScoredEvent } from "./types";
 
+// WebSocket must use the full wss:// URL (can't proxy through Next.js rewrites).
+// NEXT_PUBLIC_WS_URL is set in .env.production / Vercel env vars.
 const WS_BASE = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
 
 export type WSMessage = ScoredEvent;
