@@ -12,12 +12,17 @@ venv/
 .coverage
 htmlcov/
 
-# Data & artifacts — never commit
+# Data & artifacts
 data/raw/*
 !data/raw/.gitkeep
 data/artifacts/normal_transactions.parquet
 data/evaluation/*
 !data/evaluation/.gitkeep
+# Runtime ephemeral files (not needed on Render)
+data/aml.db
+data/generated_alerts.csv
+data/artifacts_cache/
+logs/
 
 # Env
 .env
