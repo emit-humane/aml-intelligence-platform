@@ -18,7 +18,8 @@ See [`docs/D1_problem_solution_brief.md`](docs/D1_problem_solution_brief.md) for
 
 | Resource | Link |
 |---------|------|
-| Dashboard (Vercel) | *Add after deployment* |
+| Dashboard (Vercel) | [https://aml-intelligence-platform.vercel.app](https://aml-intelligence-platform.vercel.app) |
+| API (Render) | [https://aml-intelligence-platform.onrender.com/docs](https://aml-intelligence-platform.onrender.com/docs) |
 | Technical demo video (YouTube) | *Add after recording* |
 | Pitch video | *Add after recording* |
 
@@ -51,7 +52,7 @@ See [`docs/D1_problem_solution_brief.md`](docs/D1_problem_solution_brief.md) for
 
 ```bash
 # Clone
-git clone https://github.com/<your-org>/aml-intelligence-platform.git
+git clone https://github.com/emit-humane/aml-intelligence-platform.git
 cd aml-intelligence-platform
 
 # Copy env template
