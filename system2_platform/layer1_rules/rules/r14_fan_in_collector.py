@@ -10,6 +10,7 @@ from ...contracts.live_graph_feature_vector import LiveGraphFeatureVector
 
 _THRESHOLD_LOW  = 3   # >= 3 unique senders to one receiver
 _THRESHOLD_HIGH = 7   # >= 7 unique senders — strong signal
+_WEIGHT = 0.8         # fixed per-rule weight used by the scoring formula
 
 
 def rule(
@@ -23,12 +24,7 @@ def rule(
     if n < _THRESHOLD_LOW:
         return False, 0.0, ""
 
-    if n >= _THRESHOLD_HIGH:
-        score = min(35.0 + (n - _THRESHOLD_HIGH) * 3.0, 50.0)
-    else:
-        score = 20.0 + (n - _THRESHOLD_LOW) * 5.0   # 20 → 40
-
-    return True, min(score, 50.0), (
+    return True, _WEIGHT, (
         f"R14: Receiver {gfv.receiver_account} has {n} unique incoming senders "
         f"(fan-in collector — possible layering hub or mule account)"
     )

@@ -120,10 +120,11 @@ class _AccountState:
     """Maintains rolling windows for a single account."""
 
     __slots__ = (
-        "txns",          # deque[(ts, amount, receiver, device, ip, country, lat, lon, status)]
-        "device_seen",   # set of all device_ids ever seen
-        "ip_seen",       # set of all ips ever seen
-        "all_amounts",   # deque for Benford chi2 (last 200)
+        "txns",             # deque[(ts, amount, receiver, device, ip, country, lat, lon, status)]
+        "device_seen",      # set of all device_ids ever seen
+        "ip_seen",          # set of all ips ever seen
+        "all_amounts",      # deque for Benford chi2 (last 200)
+        "last_tx_ts_ever",  # most recent tx timestamp, NEVER trimmed (needed for R04 dormancy)
     )
 
     def __init__(self) -> None:
@@ -131,6 +132,7 @@ class _AccountState:
         self.device_seen: set[str] = set()
         self.ip_seen: set[str] = set()
         self.all_amounts: deque[float] = deque(maxlen=200)
+        self.last_tx_ts_ever: datetime | None = None
 
     def add(self, ts: datetime, amount: float, receiver: str, device: str,
             ip: str, country: str, lat: float, lon: float, status: str) -> None:
@@ -138,6 +140,8 @@ class _AccountState:
         self.device_seen.add(device)
         self.ip_seen.add(ip)
         self.all_amounts.append(amount)
+        # Always track the most-recent timestamp so dormancy gap survives the 35-day trim
+        self.last_tx_ts_ever = ts
 
     def compute_windows(self, now: datetime) -> dict:
         """
@@ -364,8 +368,13 @@ class FeatureStore:
         avg_7d = float(np.mean(amts_7d)) if amts_7d else 0.0
         std_7d = float(np.std(amts_7d)) if len(amts_7d) > 1 else 0.0
 
-        # Gap: seconds between last two txns in 24h window
-        gap_sec = (w24h[-1][0] - w24h[-2][0]).total_seconds() if len(w24h) >= 2 else 86400.0
+        # Gap: time elapsed since the account's most recent previous transaction.
+        # Use last_tx_ts_ever (never trimmed) so R04 dormancy detection works even when
+        # the prior transaction is older than the 24h/35d rolling windows.
+        if st.last_tx_ts_ever is not None:
+            gap_sec = max(0.0, (ts - st.last_tx_ts_ever).total_seconds())
+        else:
+            gap_sec = 86_400.0  # default: 1 day for brand-new accounts
 
         night_r = (sum(1 for t in w7d if t[0].hour in _NIGHT_HOURS) / len(w7d)) if w7d else 0.0
         wknd_r  = (sum(1 for t in w7d if t[0].weekday() in _WEEKEND_DAYS) / len(w7d)) if w7d else 0.0
