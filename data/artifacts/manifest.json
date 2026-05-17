@@ -1,10 +1,10 @@
 {
-  "generated_at": 1778972512.7976573,
+  "generated_at": 1779053998.4337187,
   "root": "data\\artifacts",
   "artifacts": {
     "autoencoder_threshold": {
       "path": "data\\artifacts\\autoencoder_threshold.joblib",
-      "size_bytes": 25,
+      "size_bytes": 24,
       "type": "joblib"
     },
     "behavioral_profiles": {
@@ -29,12 +29,12 @@
     },
     "isolation_forest": {
       "path": "data\\artifacts\\isolation_forest.joblib",
-      "size_bytes": 710815,
+      "size_bytes": 636425,
       "type": "joblib"
     },
     "lof_model": {
       "path": "data\\artifacts\\lof_model.joblib",
-      "size_bytes": 10839491,
+      "size_bytes": 1605161,
       "type": "joblib"
     },
     "multigraph": {
@@ -49,7 +49,7 @@
     },
     "scaler_behavioral": {
       "path": "data\\artifacts\\scaler_behavioral.joblib",
-      "size_bytes": 1237,
+      "size_bytes": 1629,
       "type": "joblib"
     },
     "suspicious_paths": {

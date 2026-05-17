@@ -128,29 +128,53 @@ class BehavioralInferenceEngine:
     ) -> np.ndarray:
         """
         Assemble a (1, 52) numpy feature vector matching the training schema.
-        Uses scaled_feature_vector from fv (45 dims) + 7 graph features.
-        Falls back to zeros for graph features if gfv is None.
+
+        fv.scaled_feature_vector (45 dims) — already scaled by S5 using the
+        first 45 components of the 52-dim scaler_behavioral.
+
+        The 7 graph features are raw at this point; we apply the tail
+        (mean_[45:] / scale_[45:]) of the same 52-dim scaler here so that
+        ALL 52 dims are on a consistent z-score scale before reaching the
+        IsoForest / LOF / Autoencoder models.
         """
         behav = np.array(fv.scaled_feature_vector, dtype=np.float32)
         # Pad / truncate to 45 dims if necessary
         behav = behav[:45] if len(behav) >= 45 else np.pad(behav, (0, 45 - len(behav)))
 
         if gfv is not None:
-            graph_feat = np.array([
+            graph_feat_raw = np.array([
                 gfv.sender_pagerank,
                 gfv.sender_betweenness,
                 gfv.sender_fan_in_score,
                 gfv.sender_fan_out_score,
                 gfv.sender_community_density,
                 gfv.sender_benford_chi2_community,
-                # volume_asymmetry: (sent − received) / (sent + received + 1)
-                0.0,   # live graph doesn't supply volume_asymmetry; use 0
+                # volume_asymmetry: live graph doesn't compute it; use 0
+                0.0,
             ], dtype=np.float32)
         else:
-            graph_feat = np.zeros(7, dtype=np.float32)
+            graph_feat_raw = np.zeros(7, dtype=np.float32)
+
+        # Scale the 7 graph dims using the tail of the 52-dim scaler
+        graph_feat = self._scale_graph(graph_feat_raw)
 
         x = np.concatenate([behav, graph_feat]).reshape(1, -1)   # (1, 52)
         return x
+
+    def _scale_graph(self, graph_feat_raw: np.ndarray) -> np.ndarray:
+        """Apply the graph-feature portion of the 52-dim scaler."""
+        if self._scaler is None:
+            return graph_feat_raw
+        try:
+            n_feat = getattr(self._scaler, "n_features_in_", 0)
+            if n_feat >= 52:
+                mean_7  = np.asarray(self._scaler.mean_[45:52],  dtype=np.float32)
+                scale_7 = np.asarray(self._scaler.scale_[45:52], dtype=np.float32)
+                return (graph_feat_raw - mean_7) / np.where(scale_7 > 0, scale_7, 1.0)
+            # Old 45-dim scaler — no graph scaling available, return raw
+            return graph_feat_raw
+        except Exception:
+            return graph_feat_raw
 
     # ------------------------------------------------------------------
     # Scoring

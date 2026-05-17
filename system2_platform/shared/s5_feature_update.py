@@ -61,11 +61,26 @@ class FeatureUpdater:
         return fv
 
     def _rescale(self, feature_vector: list[float]) -> list[float]:
-        """Apply L3A trained scaler to the 45-dim behavioral vector."""
+        """
+        Apply L3A trained scaler to the 45-dim behavioral vector.
+
+        The saved scaler_behavioral is a 52-dim StandardScaler (all behavioral
+        + graph features).  We extract only the first 45 components (mean_[:45]
+        and scale_[:45]) to scale the behavioral dims — graph dims are handled
+        separately by L3B at inference time.
+        """
         import numpy as np
-        x = np.array(feature_vector[:45], dtype=np.float32).reshape(1, -1)
+        x = np.array(feature_vector[:45], dtype=np.float32)
         try:
-            scaled = self._scaler.transform(x)[0]
+            n_feat = getattr(self._scaler, "n_features_in_", 0)
+            if n_feat == 45:
+                # Backward-compat: 45-dim scaler (old artifacts)
+                scaled = self._scaler.transform(x.reshape(1, -1))[0]
+            else:
+                # 52-dim scaler: apply only the 45 behavioral components
+                mean_45  = np.asarray(self._scaler.mean_[:45],  dtype=np.float32)
+                scale_45 = np.asarray(self._scaler.scale_[:45], dtype=np.float32)
+                scaled = (x - mean_45) / np.where(scale_45 > 0, scale_45, 1.0)
             return scaled.tolist()
         except Exception:
             return feature_vector

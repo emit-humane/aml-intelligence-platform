@@ -122,36 +122,40 @@ def _extract_52_features(
     Compute 45 S1 features via FeatureStore, merge 7 graph features = 52 dims.
     behavioral_df is expected to already be the desired sample (pre-filtered).
     Returns (X: ndarray shape (n, 52), feature_names: list[str]).
+
+    IMPORTANT — raw features, not batch-standardised:
+    We call _compute_raw() / _ingest_row() directly so that X_45 contains the
+    raw (unscaled) feature values.  This matches what S5 FeatureUpdater does at
+    inference time: it also starts from raw values and then applies the saved
+    scaler_behavioral to the 45-dim vector.  Using transform() here would give
+    *batch-standardised* values, causing a training/inference distribution
+    mismatch that saturates LOF and Autoencoder scores at 100.
     """
     sample = behavioral_df.reset_index(drop=True)
-    print(f"[L3A] Computing S1 features on {len(sample):,} transactions...")
+    print(f"[L3A] Computing S1 raw features on {len(sample):,} transactions...")
     t0 = time.time()
-    feature_vectors = feature_store.transform(sample)
-    print(f"[L3A] S1 features done in {time.time()-t0:.1f}s")
 
-    # Build 45-dim matrix from FeatureStore output
-    behavioral_cols = [
-        "tx_velocity_1h", "tx_velocity_6h", "tx_velocity_24h", "tx_velocity_7d",
-        "avg_amount_7d", "std_amount_7d", "tx_gap_seconds", "night_tx_ratio",
-        "weekend_tx_ratio", "hour_of_day", "day_of_week",
-        "beneficiary_count_7d", "beneficiary_count_30d", "receiver_entropy",
-        "amount_zscore", "avg_daily_volume_30d", "round_amount_flag",
-        "sub_threshold_flag", "amount_leading_digit", "benford_chi2_score",
-        "geo_distance_km", "country_switch_count_7d", "impossible_travel_flag",
-        "high_risk_country_flag", "cross_border_ratio_30d",
-        "device_change_count_7d", "new_device_flag", "shared_device_count",
-        "ip_change_count_24h",
-    ]
+    # Reset FeatureStore state so we replay history deterministically
+    feature_store._states.clear()
+    feature_store._device_to_accounts.clear()
 
-    # Use scaled_feature_vector (45-dim) directly from S1
-    X_45 = np.array([fv.scaled_feature_vector for fv in feature_vectors], dtype=float)
+    raw_matrix: list[list[float]] = []
+    sender_col: list[str] = []
+    for row in sample.sort_values("timestamp").itertuples(index=False):
+        raw = feature_store._compute_raw(row)    # pre-event raw features
+        raw_matrix.append(raw)
+        sender_col.append(str(getattr(row, "sender_account", "")))
+        feature_store._ingest_row(row)           # update state after computing
+
+    print(f"[L3A] S1 raw features done in {time.time()-t0:.1f}s")
+
+    X_45 = np.array(raw_matrix, dtype=float)     # (n, 45) — raw, unscaled
 
     # Merge 7 graph features per sender account
     gf_indexed = graph_features_df.set_index("account_id")[_GRAPH_FEATURE_COLS]
 
-    sender_accounts = sample["sender_account"].tolist()
-    X_7 = np.zeros((len(sender_accounts), len(_GRAPH_FEATURE_COLS)), dtype=float)
-    for i, acc in enumerate(sender_accounts):
+    X_7 = np.zeros((len(sender_col), len(_GRAPH_FEATURE_COLS)), dtype=float)
+    for i, acc in enumerate(sender_col):
         if acc in gf_indexed.index:
             X_7[i] = gf_indexed.loc[acc].values
 
@@ -272,9 +276,17 @@ def train(
     X = X[mask]
     print(f"[L3A] After NaN/Inf filter: {X.shape}")
 
-    # Scale
+    # Scale ALL 52 dims (behavioral + graph) with a single StandardScaler.
+    # This is essential because benford_chi2_community can reach 14 000+ and
+    # causes AE gradient explosion when left unscaled.
+    #
+    # The 52-dim scaler is used consistently:
+    #   • S5 FeatureUpdater._rescale() extracts mean_[:45] / scale_[:45] to
+    #     scale the 45 behavioral dims → stored in fv.scaled_feature_vector
+    #   • L3B BehavioralInferenceEngine._assemble_features() extracts mean_[45:]
+    #     / scale_[45:] to scale the 7 graph dims at inference time
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X)               # (n, 52) all scaled
     artifact_store.save("scaler_behavioral", scaler)
     artifact_store.save("feature_columns", feature_names)
 
@@ -384,8 +396,9 @@ def train_models_only(
     X = X[mask]
     print(f"[L3A.models_only] After NaN/Inf filter: {X.shape}")
 
+    # Scale ALL 52 dims — see comment in train() above for rationale.
     scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X)               # (n, 52) all scaled
     artifact_store.save("scaler_behavioral", scaler)
     artifact_store.save("feature_columns", feature_names)
 

@@ -135,13 +135,21 @@ def run_pipeline(
             train_models_only,
             _MAX_FEATURE_ROWS,
         )
-        # Sample normal transactions for S1 feature extraction
+        # Sample normal transactions for S1 feature extraction.
+        # Cap at 20 txns per sender to prevent hub accounts from dominating
+        # and skewing the feature scaler (ACC001171 has 42K txns alone).
+        _MAX_PER_ACCOUNT = 20
         normal_df = df[df["is_fraud"] == False].reset_index(drop=True)
         rng = np.random.default_rng(seed)
-        n_sample = min(_MAX_FEATURE_ROWS, len(normal_df))
-        sample_idx = rng.choice(len(normal_df), size=n_sample, replace=False)
+        _capped_parts = []
+        for _, _grp in normal_df.groupby("sender_account"):
+            _n = min(len(_grp), _MAX_PER_ACCOUNT)
+            _capped_parts.append(_grp.sample(_n, random_state=seed))
+        capped_df = pd.concat(_capped_parts, ignore_index=True)
+        n_sample = min(_MAX_FEATURE_ROWS, len(capped_df))
+        sample_idx = rng.choice(len(capped_df), size=n_sample, replace=False)
         sample_df = (
-            normal_df.iloc[sample_idx]
+            capped_df.iloc[sample_idx]
             .sort_values("timestamp")
             .reset_index(drop=True)
         )
