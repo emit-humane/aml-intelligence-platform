@@ -1,0 +1,20 @@
+# Binary artifacts — never touch line endings
+*.joblib binary
+*.pt     binary
+*.pkl    binary
+*.npy    binary
+*.parquet binary
+*.db     binary
+
+# Text files — normalize to LF
+*.py     text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.js     text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yaml   text eol=lf
+*.yml    text eol=lf
+*.toml   text eol=lf
+*.txt    text eol=lf
+Makefile text eol=lf
