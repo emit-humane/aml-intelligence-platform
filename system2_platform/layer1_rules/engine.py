@@ -1,15 +1,14 @@
 """
 Layer 1 — Rule Engine.
 
-Runs all 13 deterministic rules against a LiveFeatureVector (and optionally
+Runs all 15 deterministic rules against a LiveFeatureVector (and optionally
 a LiveGraphFeatureVector) and produces a RuleEngineOutput.
 
 Design:
-  - Each rule is a callable: rule(fv, gfv) -> (triggered, score, explanation)
-  - Scores from triggered rules are summed and clamped to [0, 100]
-  - rule_score represents suspicion level; individual scores are calibrated
-    so a single critical rule (~40 pts) + a supporting rule (~20 pts) approaches
-    the High band (61–80).
+  - Each rule is a callable: rule(fv, gfv) -> (triggered, weight, explanation)
+  - weight is the fixed per-rule weight defined in WEIGHTS
+  - rule_score = min(100.0, round((sum_of_fired_weights / MAX_POSSIBLE) * 100, 2))
+  - MAX_POSSIBLE = sum of all rule weights = 12.2
 """
 
 from __future__ import annotations
@@ -35,6 +34,28 @@ from .rules.r12_kyc_mismatch import rule as r12
 from .rules.r13_benford import rule as r13
 from .rules.r14_fan_in_collector import rule as r14
 from .rules.r15_passthrough_layering import rule as r15
+
+# Per-rule weights as defined in spec
+WEIGHTS: dict[str, float] = {
+    "R01": 1.0,
+    "R02": 1.0,
+    "R03": 0.8,
+    "R04": 0.9,
+    "R05": 0.9,
+    "R06": 0.7,
+    "R07": 0.6,
+    "R08": 0.7,
+    "R09": 0.8,
+    "R10": 1.0,
+    "R11": 0.6,
+    "R12": 0.8,
+    "R13": 0.7,
+    "R14": 0.8,
+    "R15": 0.9,
+}
+
+# Sum of all weights: 1.0+1.0+0.8+0.9+0.9+0.7+0.6+0.7+0.8+1.0+0.6+0.8+0.7+0.8+0.9 = 12.2
+MAX_POSSIBLE = 12.2
 
 # (rule_id, callable)
 _RULES: list[tuple[str, Callable]] = [
@@ -66,7 +87,7 @@ class RuleEngine:
     ) -> RuleEngineOutput:
         triggered_ids: list[str] = []
         explanations: list[str] = []
-        total_score = 0.0
+        raw_score = 0.0
 
         for rule_id, rule_fn in _RULES:
             try:
@@ -78,13 +99,13 @@ class RuleEngine:
             if fired:
                 triggered_ids.append(rule_id)
                 explanations.append(explanation)
-                total_score += score
+                raw_score += score
 
-        clamped = min(100.0, max(0.0, total_score))
+        rule_score = min(100.0, round((raw_score / MAX_POSSIBLE) * 100, 2))
 
         return RuleEngineOutput(
             transaction_id=fv.transaction_id,
-            rule_score=round(clamped, 2),
+            rule_score=rule_score,
             triggered_rules=triggered_ids,
             rule_explanations=explanations,
             rule_count=len(triggered_ids),

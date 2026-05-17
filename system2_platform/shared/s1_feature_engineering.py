@@ -35,7 +35,7 @@ from ..contracts.live_feature_vector import LiveFeatureVector
 
 FEATURE_DIM = 45
 
-_HIGH_RISK_COUNTRIES = {"AE", "NG", "PK", "MU", "CN", "IR", "KP", "SY"}
+_HIGH_RISK_COUNTRIES = {"AE", "MU", "CN", "NG", "PK", "CH"}
 
 _TX_TYPES = ["NEFT", "RTGS", "IMPS", "Wire", "UPI", "Card",
              "TRANSFER", "WIRE", "PAYMENT"]
@@ -388,7 +388,7 @@ class FeatureStore:
         amts_30d = [t[1] for t in w30d]
         avg_daily_vol_30d = sum(amts_30d) / 30.0 if amts_30d else 0.0
 
-        round_flag   = 1.0 if (amount % 1000 == 0 and amount >= 10_000) else 0.0
+        round_flag   = 1.0 if (amount % 100_000 == 0 and amount >= 100_000) else 0.0
         sub_thr_flag = 1.0 if (0.85 * self._threshold <= amount < self._threshold) else 0.0
         ld = float(_leading_digit(amount))
         benford_chi2 = _benford_chi2(list(st.all_amounts))
@@ -492,6 +492,10 @@ class FeatureStore:
             new_device_flag=bool(r[26]),
             shared_device_count=int(r[27]),
             ip_change_count_24h=int(r[28]),
+            # Transaction-level fields for rule engine
+            amount=float(getattr(row, "amount", 0.0)),
+            is_international=bool(getattr(row, "is_international", False)),
+            kyc_level=int(getattr(row, "kyc_level", 0)),
             # Scaled vector (all 45 normalised)
             scaled_feature_vector=scaled,
         )

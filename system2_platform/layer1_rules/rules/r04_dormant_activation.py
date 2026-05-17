@@ -3,30 +3,19 @@ from __future__ import annotations
 from ...contracts.live_feature_vector import LiveFeatureVector
 from ...contracts.live_graph_feature_vector import LiveGraphFeatureVector
 
-# If gap since last tx is very large (> 30 days = 2592000 sec) and z-score is high
-_GAP_DORMANT_SEC = 30 * 86400
+# 180 days = 15_552_000 seconds
+_GAP_DORMANT_SEC = 15_552_000
+_WEIGHT = 0.9
 
 
 def rule(
     fv: LiveFeatureVector,
     gfv: LiveGraphFeatureVector | None,
 ) -> tuple[bool, float, str]:
-    gap = fv.tx_gap_seconds
-    z = fv.amount_zscore
-    v24 = fv.tx_velocity_24h
-
-    # tx_gap_seconds > 30 days indicates account was dormant
-    if gap < _GAP_DORMANT_SEC:
-        return False, 0.0, ""
-
-    gap_days = gap / 86400
-    base_score = 20.0
-    if z >= 3.0:
-        base_score += 15.0
-    if v24 >= 3:
-        base_score += 10.0
-
-    return True, min(base_score, 45.0), (
-        f"R04: Account inactive {gap_days:.0f} days; now tx z-score={z:.1f}, "
-        f"velocity_24h={int(v24)} (dormant activation)"
-    )
+    if fv.tx_gap_seconds > _GAP_DORMANT_SEC and fv.amount > 100_000:
+        gap_days = fv.tx_gap_seconds / 86400
+        return True, _WEIGHT, (
+            f"R04: Account inactive {gap_days:.0f} days; transaction amount={fv.amount:,.0f} "
+            f"(dormant activation)"
+        )
+    return False, 0.0, ""

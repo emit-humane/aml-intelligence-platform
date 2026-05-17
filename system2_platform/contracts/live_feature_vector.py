@@ -46,5 +46,10 @@ class LiveFeatureVector(BaseModel):
     shared_device_count: int
     ip_change_count_24h: int
 
+    # --- Transaction-level fields (needed by rule engine) ---
+    amount: float = 0.0
+    is_international: bool = False
+    kyc_level: int = 0
+
     # StandardScaler output fed directly to L3 models
     scaled_feature_vector: list[float]
