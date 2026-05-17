@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.uv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Data & artifacts — never commit
+data/raw/*
+!data/raw/.gitkeep
+data/artifacts/normal_transactions.parquet
+data/evaluation/*
+!data/evaluation/.gitkeep
+
+# Env
+.env
+.env.local
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

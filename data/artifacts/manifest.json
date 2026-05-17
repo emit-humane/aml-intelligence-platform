@@ -1,0 +1,86 @@
+{
+  "generated_at": 1778972512.7976573,
+  "root": "data\\artifacts",
+  "artifacts": {
+    "autoencoder_threshold": {
+      "path": "data\\artifacts\\autoencoder_threshold.joblib",
+      "size_bytes": 25,
+      "type": "joblib"
+    },
+    "behavioral_profiles": {
+      "path": "data\\artifacts\\behavioral_profiles.joblib",
+      "size_bytes": 120752,
+      "type": "joblib"
+    },
+    "community_profiles": {
+      "path": "data\\artifacts\\community_profiles.joblib",
+      "size_bytes": 27849,
+      "type": "joblib"
+    },
+    "feature_columns": {
+      "path": "data\\artifacts\\feature_columns.joblib",
+      "size_bytes": 229,
+      "type": "joblib"
+    },
+    "graph_features": {
+      "path": "data\\artifacts\\graph_features.joblib",
+      "size_bytes": 197891,
+      "type": "joblib"
+    },
+    "isolation_forest": {
+      "path": "data\\artifacts\\isolation_forest.joblib",
+      "size_bytes": 710815,
+      "type": "joblib"
+    },
+    "lof_model": {
+      "path": "data\\artifacts\\lof_model.joblib",
+      "size_bytes": 10839491,
+      "type": "joblib"
+    },
+    "multigraph": {
+      "path": "data\\artifacts\\multigraph.joblib",
+      "size_bytes": 12628644,
+      "type": "joblib"
+    },
+    "node_index": {
+      "path": "data\\artifacts\\node_index.joblib",
+      "size_bytes": 14466,
+      "type": "joblib"
+    },
+    "scaler_behavioral": {
+      "path": "data\\artifacts\\scaler_behavioral.joblib",
+      "size_bytes": 1237,
+      "type": "joblib"
+    },
+    "suspicious_paths": {
+      "path": "data\\artifacts\\suspicious_paths.joblib",
+      "size_bytes": 62566,
+      "type": "joblib"
+    },
+    "autoencoder": {
+      "path": "data\\artifacts\\autoencoder.pt",
+      "size_bytes": 21296,
+      "type": "torch"
+    },
+    "tgn_model": {
+      "path": "data\\artifacts\\tgn_model.pt",
+      "size_bytes": 371214,
+      "type": "torch"
+    },
+    "node_embeddings": {
+      "path": "data\\artifacts\\node_embeddings.npy",
+      "size_bytes": 1045888,
+      "type": "numpy"
+    },
+    "tgn_memory_state": {
+      "path": "data\\artifacts\\tgn_memory_state.pkl",
+      "size_bytes": 922145,
+      "type": "pickle"
+    },
+    "node_embedding_index": {
+      "path": "data\\artifacts\\node_embedding_index.json",
+      "size_bytes": 76505,
+      "type": "json"
+    }
+  }
+}
