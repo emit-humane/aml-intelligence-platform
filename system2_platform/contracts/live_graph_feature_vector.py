@@ -25,6 +25,7 @@ class LiveGraphFeatureVector(BaseModel):
 
     # --- Receiver node metrics ---
     receiver_in_degree: int
+    receiver_in_degree_unique: int   # unique predecessor accounts (fan-in signal)
     receiver_out_degree: int
     receiver_community_id: int
     receiver_community_risk_score: float

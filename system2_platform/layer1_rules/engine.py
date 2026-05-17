@@ -33,6 +33,8 @@ from .rules.r10_cycle_closure import rule as r10
 from .rules.r11_round_amount_structuring import rule as r11
 from .rules.r12_kyc_mismatch import rule as r12
 from .rules.r13_benford import rule as r13
+from .rules.r14_fan_in_collector import rule as r14
+from .rules.r15_passthrough_layering import rule as r15
 
 # (rule_id, callable)
 _RULES: list[tuple[str, Callable]] = [
@@ -49,6 +51,8 @@ _RULES: list[tuple[str, Callable]] = [
     ("R11", r11),
     ("R12", r12),
     ("R13", r13),
+    ("R14", r14),
+    ("R15", r15),
 ]
 
 

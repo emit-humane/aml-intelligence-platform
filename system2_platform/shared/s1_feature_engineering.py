@@ -325,7 +325,10 @@ class FeatureStore:
         )
         state.trim(ts)
         device = str(getattr(row, "device_id", ""))
-        self._device_to_accounts[device].add(sender)
+        # Only track non-empty device IDs — empty string is a data-quality
+        # placeholder and must not be treated as a shared device signal.
+        if device:
+            self._device_to_accounts[device].add(sender)
 
     def _compute_raw(self, row: Any) -> list[float]:
         ts = _to_dt(getattr(row, "timestamp", None))
@@ -411,7 +414,7 @@ class FeatureStore:
         devs_7d = {t[3] for t in w7d}
         dev_change = float(len(devs_7d))
         new_dev    = 0.0 if device in st.device_seen else 1.0
-        shared_dev = float(len(self._device_to_accounts.get(device, set())))
+        shared_dev = float(len(self._device_to_accounts.get(device, set()))) if device else 0.0
         ip_chg     = float(len({t[4] for t in w24h}))
 
         # ---- Derived / encoded [29–44] ----

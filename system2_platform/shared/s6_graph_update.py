@@ -110,6 +110,7 @@ class GraphUpdater:
         # Unique predecessor/successor counts
         src_in_unique  = len(list(G.predecessors(src)))
         src_out_unique = len(list(G.successors(src)))
+        dst_in_unique  = len(list(G.predecessors(dst)))  # fan-in signal
 
         # Cycle detection (lightweight: look for src in dst's successors within 3 hops)
         creates_cycle, cycle_len = _detect_cycle(G, src, dst, max_depth=3)
@@ -140,6 +141,7 @@ class GraphUpdater:
             sender_community_risk_score=0.0,
             sender_benford_chi2_community=0.0,
             receiver_in_degree=dst_in_deg,
+            receiver_in_degree_unique=dst_in_unique,
             receiver_out_degree=dst_out_deg,
             receiver_community_id=-1,
             receiver_community_risk_score=0.0,
