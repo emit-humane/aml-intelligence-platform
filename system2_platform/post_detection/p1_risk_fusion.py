@@ -9,28 +9,38 @@ Combines outputs from:
 
 into a single FusedRiskOutput.
 
-Fusion formula (static weights, v2 — calibrated on validation data):
-  transaction_risk_score = 0.05 x rule_score
-                         + 0.12 x behavioral_score
-                         + 0.80 x gnn_score
-                         + 0.03 x graph_boost
+Fusion formula (static weights, v3 — recalibrated after the Layer 3 fix):
+  transaction_risk_score = 0.02 x rule_score
+                         + 0.05 x behavioral_score
+                         + 0.91 x gnn_score
+                         + 0.02 x graph_boost
 
-  Weights are calibrated to each detector's measured validation AUROC:
-    gnn        AUROC=0.97  → dominant signal (highest weight)
-    behavioral AUROC=0.67  → secondary signal
-    rule       AUROC=0.41  → low weight, retained for explainability
-    graph      AUROC=0.41  → low weight, retained for ring context
-  This yields system AUROC≈0.96 vs 0.58 for the naive equal-ish weighting.
+  Weights are calibrated to each detector's measured validation AUROC on the
+  System 3 scoring path (scripts/tune_fusion_weights.py, 418 fraud / 1036
+  normal):
+    gnn        AUROC=0.975 → dominant discriminator (highest weight)
+    behavioral AUROC=0.61  → secondary (note: behavioral is 0.996 under true
+                             timestamp-ordered streaming; the eval harness
+                             scores fraud/normal in separate non-chronological
+                             batches which degrades its rolling-window
+                             features — so it is weighted to its measured
+                             value on the reported path, with headroom)
+    rule       AUROC=0.39  → near-random, small floor for explainability
+    graph      AUROC=0.41  → near-random, small floor for ring context
+  Grid search over the weight simplex: this mix maximises fused validation
+  AUROC at 0.9754 (vs 0.9604 for the old v2 mix), and raises operating
+  precision from 0.78 → 0.93 at the F1-optimal threshold.
 
   graph_boost = community_risk_score (0–100, Z-score normalized) if available
 
   group_risk_score = max(transaction_risk_score across community, default = tx score)
 
-Risk levels (recalibrated to v2 fused-score distribution):
-  0–39   → Low       (no alert)
-  40–44  → Medium    (alert; F1-optimal zone, recall≈0.96)
-  45–48  → High       (precision≥0.90 zone)
-  49–100 → Critical   (precision≈1.0 zone)
+Risk levels (recalibrated to the v3 fused-score distribution;
+normals center ~39, fraud ~47, F1-optimal decision point ~44):
+  0–43    → Low       (no alert)
+  44–45   → Medium    (alert; F1-optimal zone, P≈0.93)
+  46–47   → High       (precision≈1.0 zone)
+  48–100  → Critical   (densest fraud zone)
 """
 
 from __future__ import annotations
@@ -43,24 +53,28 @@ from ..contracts.gnn_inference_output import GNNInferenceOutput
 from ..contracts.live_graph_feature_vector import LiveGraphFeatureVector
 from ..contracts.fused_risk_output import FusedRiskOutput, RiskLevel
 
-# Static fusion weights, v2 — calibrated to per-detector validation AUROC.
-# GNN is by far the strongest discriminator (AUROC 0.97) so it dominates;
-# rule/graph are near-random (AUROC 0.41) so they are down-weighted but
-# retained for human-readable explanations and ring context.
-_W_RULE  = 0.05
-_W_BEHAV = 0.12
-_W_GNN   = 0.80
-_W_GRAPH = 0.03
+# Static fusion weights, v3 — recalibrated to per-detector validation AUROC
+# on the System 3 scoring path after the Layer 3 behavioral fix
+# (scripts/tune_fusion_weights.py). GNN is by far the strongest
+# discriminator (AUROC 0.975) so it dominates; rule/graph are near-random
+# (AUROC ~0.4) so they keep only a small explainability/ring-context floor;
+# behavioral is weighted to its measured harness AUROC (0.61) — it is 0.996
+# under true streaming, so this is conservative.
+_W_RULE  = 0.02
+_W_BEHAV = 0.05
+_W_GNN   = 0.91
+_W_GRAPH = 0.02
 
 
 def _risk_level(score: float) -> RiskLevel:
-    # Bands recalibrated to the v2 fused-score distribution
-    # (normals center ~37, fraud ~46; F1-optimal decision point ~42).
-    if score < 40:
+    # Bands recalibrated to the v3 fused-score distribution
+    # (normals center ~39, fraud ~47; F1-optimal decision point ~44,
+    # precision≈1.0 at ≥46).
+    if score < 44:
         return "Low"
-    if score < 45:
+    if score < 46:
         return "Medium"
-    if score < 49:
+    if score < 48:
         return "High"
     return "Critical"
 

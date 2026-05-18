@@ -32,8 +32,8 @@ import pandas as pd
 def quick_evaluate(
     scores_jsonl: str | Path,
     truth_csv: str | Path,
-    threshold_medium: float = 40.0,
-    threshold_high: float = 49.0,
+    threshold_medium: float = 44.0,
+    threshold_high: float = 48.0,
 ) -> dict:
     scores_path = Path(scores_jsonl)
     if not scores_path.exists():
@@ -187,8 +187,8 @@ def main() -> None:
     parser.add_argument("--out-dir",
                         default="data/evaluation",
                         help="Output directory for evaluation_report.json")
-    parser.add_argument("--threshold-medium", type=float, default=40.0)
-    parser.add_argument("--threshold-high",   type=float, default=49.0)
+    parser.add_argument("--threshold-medium", type=float, default=44.0)
+    parser.add_argument("--threshold-high",   type=float, default=48.0)
     parser.add_argument("--full",  action="store_true",
                         help="Run full System 3 evaluation (produces evaluation_report.json)")
     parser.add_argument("--quick", action="store_true",

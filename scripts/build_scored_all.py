@@ -13,7 +13,7 @@ import pandas as pd
 FRAUD_CSV    = Path("data/evaluation/scored_transactions.csv")
 NORMAL_JSONL = Path("data/evaluation/normal_sample_scores.jsonl")
 OUT_CSV      = Path("data/evaluation/scored_all.csv")
-ALERT_THRESHOLD = 40.0
+ALERT_THRESHOLD = 44.0  # v3 — aligned with p2_alert_manager._ALERT_THRESHOLD
 
 rows = []
 
