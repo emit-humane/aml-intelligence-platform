@@ -153,7 +153,7 @@ for ($j = 0; $j -lt 20; $j++) {
     $hr   = "{0:D2}" -f [int](($j % 5) * 3 + 8)
     $txid = "B01_SEED_{0:D3}" -f ($j + 1)
     Post-Behav (Tx -id $txid -sender "B01_ACC" -receiver "B01_RX" `
-                   -amount $b01amounts[$j] -ts "2024-07-0${day}T${hr}:00:00Z") "" $false | Out-Null
+                   -amount $b01amounts[$j] -ts "2024-07-${day}T${hr}:00:00Z") "" $false | Out-Null
 }
 Write-Host "  [20 seed transactions sent at ~20K each -- avg_7d established]" -ForegroundColor DarkGray
 Write-Host ""

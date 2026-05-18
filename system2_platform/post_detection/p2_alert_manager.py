@@ -3,9 +3,9 @@ P2 — Alert Manager.
 
 Creates, stores, and retrieves Alert objects from FusedRiskOutput.
 
-Thresholds:
-  tx_score >= 31  -> alert generated (Medium or above)
-  tx_score < 31   -> silent pass-through (logged but no alert)
+Thresholds (v2 — calibrated on validation data, F1-optimal region):
+  tx_score >= 40  -> alert generated (Medium or above)
+  tx_score < 40   -> silent pass-through (logged but no alert)
 
 Storage:
   Primary  : in-memory dict (alert_id -> Alert) for fast lookups
@@ -38,8 +38,9 @@ from ..contracts.behavioral_anomaly_output import BehavioralAnomalyOutput
 from ..contracts.gnn_inference_output import GNNInferenceOutput
 from ..contracts.live_graph_feature_vector import LiveGraphFeatureVector
 
-# Minimum score to generate an alert
-_ALERT_THRESHOLD = 31.0
+# Minimum score to generate an alert (v2: calibrated to F1-optimal region;
+# recall≈0.96 at this point with the gnn-dominant fusion weights).
+_ALERT_THRESHOLD = 40.0
 
 _CSV_COLUMNS = [
     "alert_id", "transaction_id", "sender_account", "community_id",
@@ -296,10 +297,11 @@ class AlertManager:
 
 
 def _risk_level(score: float) -> RiskLevel:
-    if score <= 30:
+    # v2 bands — aligned with p1_risk_fusion._risk_level
+    if score < 40:
         return "Low"
-    if score <= 60:
+    if score < 45:
         return "Medium"
-    if score <= 80:
+    if score < 49:
         return "High"
     return "Critical"

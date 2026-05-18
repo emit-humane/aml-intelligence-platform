@@ -84,7 +84,7 @@ class TransactionOrchestrator:
         behav_engine  = BehavioralInferenceEngine.load(artifact_dir)
         gnn_engine    = GNNInferenceEngine.load(artifact_dir)
         feat_updater  = FeatureUpdater(artifact_dir)
-        graph_updater = GraphUpdater()
+        graph_updater = GraphUpdater(artifact_dir=artifact_dir)
         risk_fusion   = RiskFusion()
         alert_mgr     = AlertManager()
 

@@ -32,8 +32,8 @@ import pandas as pd
 def quick_evaluate(
     scores_jsonl: str | Path,
     truth_csv: str | Path,
-    threshold_medium: float = 31.0,
-    threshold_high: float = 61.0,
+    threshold_medium: float = 40.0,
+    threshold_high: float = 49.0,
 ) -> dict:
     scores_path = Path(scores_jsonl)
     if not scores_path.exists():
@@ -119,10 +119,10 @@ def quick_evaluate(
     print(f"  Fraud in truth:  {results['n_fraud_in_truth']:,}")
     print(f"  Coverage:        {results['coverage_pct']}%")
     print(f"  AUROC:           {results['auroc']}")
-    print(f"\n  @Medium (≥{threshold_medium}):  "
+    print(f"\n  @Medium (>={threshold_medium}):  "
           f"P={p_m:.3f}  R={r_m:.3f}  F1={f_m:.3f}  "
           f"TP={tp_m}  FP={fp_m}  FN={fn_m}")
-    print(f"  @High   (≥{threshold_high}):  "
+    print(f"  @High   (>={threshold_high}):  "
           f"P={p_h:.3f}  R={r_h:.3f}  F1={f_h:.3f}  "
           f"TP={tp_h}  FP={fp_h}  FN={fn_h}")
 
@@ -187,8 +187,8 @@ def main() -> None:
     parser.add_argument("--out-dir",
                         default="data/evaluation",
                         help="Output directory for evaluation_report.json")
-    parser.add_argument("--threshold-medium", type=float, default=31.0)
-    parser.add_argument("--threshold-high",   type=float, default=61.0)
+    parser.add_argument("--threshold-medium", type=float, default=40.0)
+    parser.add_argument("--threshold-high",   type=float, default=49.0)
     parser.add_argument("--full",  action="store_true",
                         help="Run full System 3 evaluation (produces evaluation_report.json)")
     parser.add_argument("--quick", action="store_true",

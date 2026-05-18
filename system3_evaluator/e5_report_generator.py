@@ -66,7 +66,7 @@ def generate_report(
     alerts_df = _load_alerts_df(alerts_csv)
     pattern_coverage = evaluate_pattern_coverage(joined, alerts_df)
 
-    # ── Operational metrics (threshold 31.0) ──────────────────────────────────
+    # ── Operational metrics (threshold 40.0, v2-calibrated) ───────────────────
     op = tx_metrics["operational_metrics"]
     best = tx_metrics["best_f1_metrics"]
 
@@ -84,7 +84,7 @@ def generate_report(
                title="ROC Curve — AML Platform")
     _safe_plot(plotting.plot_confusion_matrix,
                y_true, y_pred, out_dir / "confusion_matrix.png",
-               title=f"Confusion Matrix (threshold=31.0)")
+               title=f"Confusion Matrix (threshold=40.0)")
     if pattern_coverage.get("per_typology"):
         _safe_plot(plotting.plot_pattern_coverage,
                    pattern_coverage["per_typology"],
@@ -105,7 +105,7 @@ def generate_report(
         "transaction_metrics": {
             "roc_auc":              tx_metrics["roc_auc"],
             "pr_auc":               tx_metrics["pr_auc"],
-            "operational_threshold": 31.0,
+            "operational_threshold": 40.0,
             "operational": {
                 "precision":          op["precision"],
                 "recall":             op["recall"],

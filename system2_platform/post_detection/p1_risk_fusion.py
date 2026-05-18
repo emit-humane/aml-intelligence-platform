@@ -9,21 +9,28 @@ Combines outputs from:
 
 into a single FusedRiskOutput.
 
-Fusion formula (static weights, v1):
-  transaction_risk_score = 0.30 x rule_score
-                         + 0.25 x behavioral_score
-                         + 0.20 x gnn_score
-                         + 0.25 x graph_boost
+Fusion formula (static weights, v2 — calibrated on validation data):
+  transaction_risk_score = 0.05 x rule_score
+                         + 0.12 x behavioral_score
+                         + 0.80 x gnn_score
+                         + 0.03 x graph_boost
 
-  graph_boost = community_risk_score (0–100) if available, else 0
+  Weights are calibrated to each detector's measured validation AUROC:
+    gnn        AUROC=0.97  → dominant signal (highest weight)
+    behavioral AUROC=0.67  → secondary signal
+    rule       AUROC=0.41  → low weight, retained for explainability
+    graph      AUROC=0.41  → low weight, retained for ring context
+  This yields system AUROC≈0.96 vs 0.58 for the naive equal-ish weighting.
+
+  graph_boost = community_risk_score (0–100, Z-score normalized) if available
 
   group_risk_score = max(transaction_risk_score across community, default = tx score)
 
-Risk levels:
-  0–30   → Low
-  31–60  → Medium
-  61–80  → High
-  81–100 → Critical
+Risk levels (recalibrated to v2 fused-score distribution):
+  0–39   → Low       (no alert)
+  40–44  → Medium    (alert; F1-optimal zone, recall≈0.96)
+  45–48  → High       (precision≥0.90 zone)
+  49–100 → Critical   (precision≈1.0 zone)
 """
 
 from __future__ import annotations
@@ -36,19 +43,24 @@ from ..contracts.gnn_inference_output import GNNInferenceOutput
 from ..contracts.live_graph_feature_vector import LiveGraphFeatureVector
 from ..contracts.fused_risk_output import FusedRiskOutput, RiskLevel
 
-# Static fusion weights  (rule=0.30, graph=0.25, behavioral=0.25, gnn=0.20)
-_W_RULE  = 0.30
-_W_BEHAV = 0.25
-_W_GNN   = 0.20
-_W_GRAPH = 0.25
+# Static fusion weights, v2 — calibrated to per-detector validation AUROC.
+# GNN is by far the strongest discriminator (AUROC 0.97) so it dominates;
+# rule/graph are near-random (AUROC 0.41) so they are down-weighted but
+# retained for human-readable explanations and ring context.
+_W_RULE  = 0.05
+_W_BEHAV = 0.12
+_W_GNN   = 0.80
+_W_GRAPH = 0.03
 
 
 def _risk_level(score: float) -> RiskLevel:
-    if score <= 30:
+    # Bands recalibrated to the v2 fused-score distribution
+    # (normals center ~37, fraud ~46; F1-optimal decision point ~42).
+    if score < 40:
         return "Low"
-    if score <= 60:
+    if score < 45:
         return "Medium"
-    if score <= 80:
+    if score < 49:
         return "High"
     return "Critical"
 

@@ -27,13 +27,63 @@ class GraphUpdater:
     Live graph updater for streaming inference.
 
     Maintains an in-memory MultiDiGraph seeded from historical data
-    (if graph_features.parquet and accounts.parquet are available)
     and updated with each new stream event.
+
+    On init, loads precomputed L2A graph_features and L2B community_profiles
+    from the artifact store so that per-node features (pagerank, betweenness,
+    community_density, benford_chi2, community_risk_score) are available at
+    inference time without re-running the expensive offline computation.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, artifact_dir: Optional[Path] = None) -> None:
         self._builder = GraphBuilder()
         self._G: Optional[nx.MultiDiGraph] = None
+
+        # L2A: per-node graph features keyed by account_id
+        self._graph_features: dict[str, dict] = {}
+        # L2B: community risk scores keyed by community_id
+        self._community_risk: dict[int, float] = {}
+
+        if artifact_dir is not None:
+            self._load_offline_features(Path(artifact_dir))
+
+    def _load_offline_features(self, artifact_dir: Path) -> None:
+        """Load precomputed L2A/L2B artifacts for fast inference lookups."""
+        try:
+            from ..shared.s3_artifact_store import ArtifactStore
+            import pandas as pd
+            store = ArtifactStore(artifact_dir)
+
+            # L2A graph features
+            try:
+                gf: "pd.DataFrame" = store.load("graph_features")
+                if "account_id" in gf.columns:
+                    self._graph_features = gf.set_index("account_id").to_dict(orient="index")
+                    print(f"[S6] Loaded L2A graph_features: {len(self._graph_features)} accounts")
+            except Exception as e:
+                print(f"[S6] Warning: could not load graph_features: {e}")
+
+            # L2B community profiles — normalize risk to Z-score scale
+            # so that average-risk communities don't inflate scores for all accounts.
+            # community_risk_normalized = max(0, (raw - mean) / std * 33)
+            # Meaning: +1σ above mean → 33, +2σ → 66, +3σ → 99; at/below mean → 0.
+            try:
+                cp: "pd.DataFrame" = store.load("community_profiles")
+                if "community_id" in cp.columns and "risk_score" in cp.columns:
+                    raw_risks = cp["risk_score"].astype(float)
+                    risk_mean = float(raw_risks.mean())
+                    risk_std  = max(float(raw_risks.std()), 1.0)
+                    print(f"[S6] Community risk stats: mean={risk_mean:.2f} std={risk_std:.2f}")
+                    self._community_risk = {}
+                    for cid, raw in zip(cp["community_id"].astype(int), raw_risks):
+                        z = (raw - risk_mean) / risk_std
+                        self._community_risk[int(cid)] = max(0.0, min(100.0, z * 33.0))
+                    print(f"[S6] Loaded L2B community_profiles: {len(self._community_risk)} communities (Z-score normalized)")
+            except Exception as e:
+                print(f"[S6] Warning: could not load community_profiles: {e}")
+
+        except Exception as e:
+            print(f"[S6] Warning: offline feature load failed: {e}")
 
     @property
     def graph(self) -> nx.MultiDiGraph:
@@ -119,8 +169,17 @@ class GraphUpdater:
         two_hop = _two_hop_neighbors(G, src, max_nodes=20)
         two_hop_edges = _two_hop_edge_list(G, src, max_edges=30)
 
-        # Community detection skipped for live inference (too expensive per-transaction)
-        # Use defaults
+        # Look up precomputed L2A features for sender (fast dict lookup, O(1))
+        src_feats = self._graph_features.get(src, {})
+        dst_feats = self._graph_features.get(dst, {})
+
+        src_comm_id  = int(src_feats.get("community_id", -1))
+        dst_comm_id  = int(dst_feats.get("community_id", -1))
+
+        # L2B community risk score (falls back to 0 for unseen accounts/communities)
+        src_comm_risk = float(self._community_risk.get(src_comm_id, 0.0))
+        dst_comm_risk = float(self._community_risk.get(dst_comm_id, 0.0))
+
         return LiveGraphFeatureVector(
             transaction_id=event.transaction_id,
             sender_account=src,
@@ -129,25 +188,25 @@ class GraphUpdater:
             sender_out_degree=src_out_deg,
             sender_in_degree_unique=src_in_unique,
             sender_out_degree_unique=src_out_unique,
-            sender_2hop_cycle_count=0,
-            sender_3hop_cycle_count=0,
+            sender_2hop_cycle_count=int(src_feats.get("2hop_cycle_count", 0)),
+            sender_3hop_cycle_count=int(src_feats.get("3hop_cycle_count", 0)),
             sender_fan_in_score=_fan_score(src_in_deg, src_out_deg, direction="in"),
             sender_fan_out_score=_fan_score(src_in_deg, src_out_deg, direction="out"),
-            sender_pagerank=0.0,
-            sender_betweenness=0.0,
-            sender_community_id=-1,
-            sender_community_size=0,
-            sender_community_density=0.0,
-            sender_community_risk_score=0.0,
-            sender_benford_chi2_community=0.0,
+            sender_pagerank=float(src_feats.get("pagerank", 0.0)),
+            sender_betweenness=float(src_feats.get("betweenness", 0.0)),
+            sender_community_id=src_comm_id,
+            sender_community_size=int(src_feats.get("community_size", 0)),
+            sender_community_density=float(src_feats.get("community_density", 0.0)),
+            sender_community_risk_score=src_comm_risk,
+            sender_benford_chi2_community=float(src_feats.get("benford_chi2_community", 0.0)),
             receiver_in_degree=dst_in_deg,
             receiver_in_degree_unique=dst_in_unique,
             receiver_out_degree=dst_out_deg,
-            receiver_community_id=-1,
-            receiver_community_risk_score=0.0,
+            receiver_community_id=dst_comm_id,
+            receiver_community_risk_score=dst_comm_risk,
             edge_creates_cycle=creates_cycle,
             cycle_length=cycle_len,
-            shared_community=False,
+            shared_community=(src_comm_id != -1 and src_comm_id == dst_comm_id),
             two_hop_neighborhood=two_hop,
             two_hop_edge_list=two_hop_edges,
         )
