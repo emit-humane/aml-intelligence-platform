@@ -42,6 +42,34 @@ class FeatureUpdater:
             self._scaler = None
             print("[S5] Warning: scaler_behavioral not found; features will be unscaled")
 
+    def seed_from_historical(self, historical_path: Path | str) -> None:
+        """
+        Warm up the FeatureStore by replaying historical transactions so that
+        per-account rolling windows (velocity, beneficiary counts, amount
+        z-score, etc.) are populated BEFORE the first live transaction.
+
+        Without this, every account looks brand-new at inference (velocity≈0,
+        beneficiary_count≈0, tx_gap=86400 default). Combined with a scaler fit
+        on real-history features, that pushes every transaction out of
+        distribution and the L3 anomaly scores saturate / invert.
+
+        Mirrors GraphUpdater.seed_from_historical so S5 and S6 share the same
+        historical state at startup.
+        """
+        import pandas as pd
+
+        path = Path(historical_path)
+        if not path.exists():
+            print(f"[S5] Warning: historical path not found, skipping seed: {path}")
+            return
+        if path.suffix == ".parquet":
+            df = pd.read_parquet(path)
+        else:
+            df = pd.read_csv(path)
+        print(f"[S5] Seeding FeatureStore from {len(df):,} historical transactions...")
+        self._store.fit(df)  # replays sorted history via _ingest_row
+        print(f"[S5] FeatureStore seeded: {len(self._store._states):,} account states")
+
     def update_and_extract(self, event: TransactionEvent) -> LiveFeatureVector:
         """
         Compute features for the event, then update the rolling state.

@@ -90,6 +90,19 @@ class TransactionOrchestrator:
 
         if historical_parquet and Path(historical_parquet).exists():
             graph_updater.seed_from_historical(historical_parquet)
+            # S5 must be seeded too: L3 features depend on per-account rolling
+            # history. Seeding only the graph (S6) but not the feature store
+            # (S5) is what inverts the behavioral layer at inference.
+            #
+            # IMPORTANT: seed S5 from PRE-STREAM history only. The default
+            # historical file (all_transactions.parquet) also contains the
+            # forward stream; ingesting it would put future transactions in
+            # each account's rolling windows (compute_windows is not strictly
+            # backward-looking), leaking future activity into the score. The
+            # genuine past lives in historical_transactions.csv — prefer it.
+            pre_stream = Path("data/raw/historical_transactions.csv")
+            feat_seed = pre_stream if pre_stream.exists() else Path(historical_parquet)
+            feat_updater.seed_from_historical(feat_seed)
 
         print("[Orchestrator] All engines loaded.")
         return cls(rule_engine, behav_engine, gnn_engine,

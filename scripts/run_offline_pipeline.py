@@ -133,31 +133,19 @@ def run_pipeline(
         t0 = time.time()
         from system2_platform.layer3_behavioral.l3a_training import (
             train_models_only,
-            _MAX_FEATURE_ROWS,
         )
-        # Sample normal transactions for S1 feature extraction.
-        # Cap at 20 txns per sender to prevent hub accounts from dominating
-        # and skewing the feature scaler (ACC001171 has 42K txns alone).
-        _MAX_PER_ACCOUNT = 20
-        normal_df = df[df["is_fraud"] == False].reset_index(drop=True)
-        rng = np.random.default_rng(seed)
-        _capped_parts = []
-        for _, _grp in normal_df.groupby("sender_account"):
-            _n = min(len(_grp), _MAX_PER_ACCOUNT)
-            _capped_parts.append(_grp.sample(_n, random_state=seed))
-        capped_df = pd.concat(_capped_parts, ignore_index=True)
-        n_sample = min(_MAX_FEATURE_ROWS, len(capped_df))
-        sample_idx = rng.choice(len(capped_df), size=n_sample, replace=False)
-        sample_df = (
-            capped_df.iloc[sample_idx]
-            .sort_values("timestamp")
-            .reset_index(drop=True)
-        )
+        # Pass the FULL transaction stream. train_models_only replays every
+        # row in timestamp order to build true per-account rolling history,
+        # then fits the scaler/models on a per-account-capped sample of NORMAL
+        # transactions whose features were computed WITH that real history.
+        # (The old code pre-capped/subsampled BEFORE the replay, which gave
+        # every account near-empty history and produced an inverted L3 — see
+        # scripts/diagnose_l3_discrimination.py.)
         l3_summary = train_models_only(
-            sample_df    = sample_df,
+            history_df     = df,
             graph_features = graph_features,
             artifact_store = store,
-            seed         = seed,
+            seed           = seed,
         )
         print(f"  L3A done in {time.time()-t0:.1f}s  | summary: {l3_summary}")
         summary.update({f"l3a_{k}": v for k, v in l3_summary.items()})

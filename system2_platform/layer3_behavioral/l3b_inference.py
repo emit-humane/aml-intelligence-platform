@@ -64,6 +64,16 @@ _BEHAVIORAL_COLS = [
 ]
 
 
+# Behavioral ensemble weights — calibrated to per-detector validation AUROC
+# (see score() and scripts/diagnose_l3_discrimination.py). IsoForest is the
+# only validated discriminator on this dataset (AUROC≈0.996); LOF inverts
+# (≈0.11) so it is excluded; AE is non-informative (≈0.50) so it carries a
+# tiny, ranking-neutral weight.
+_W_ISO = 0.90
+_W_LOF = 0.00
+_W_AE  = 0.10
+
+
 class BehavioralInferenceEngine:
     """
     Stateless behavioral anomaly scorer.
@@ -204,8 +214,21 @@ class BehavioralInferenceEngine:
         ae_ratio = ae_recon / (self._ae_thresh + 1e-9)
         ae_score = float(np.clip(ae_ratio * 50.0, 0.0, 100.0))   # 2× threshold → 100
 
-        # --- Ensemble ---
-        ensemble = float((iso_score + lof_score + ae_score) / 3.0)
+        # --- Ensemble (AUROC-weighted, not a blind mean) ---
+        # Per-detector validation AUROC on seeded-history fraud vs normal
+        # (scripts/diagnose_l3_discrimination.py, 418 fraud / 3000 normal):
+        #   IsolationForest  AUROC = 0.996  -> the discriminator
+        #   LOF              AUROC = 0.107  -> inverted on this data
+        #   Autoencoder      AUROC = 0.500  -> non-informative (recon saturates)
+        # A plain mean lets the two broken detectors destroy the one good
+        # signal (ensemble collapsed to 0.33). We therefore weight by
+        # demonstrated discriminative power — the same methodology used for
+        # the P1 fusion v2 weights. IsoForest dominates; LOF is excluded
+        # (actively inverted); AE keeps a tiny weight (≈constant, so it does
+        # not affect ranking) and both are still returned for transparency.
+        ensemble = float(
+            _W_ISO * iso_score + _W_LOF * lof_score + _W_AE * ae_score
+        )
 
         # --- Anomaly drivers: top-3 raw feature dims with highest absolute value ---
         drivers = self._top_drivers(x[0])

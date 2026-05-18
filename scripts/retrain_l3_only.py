@@ -18,7 +18,7 @@ import pandas as pd
 ARTIFACT_DIR = Path("data/artifacts")
 DATA_PATH    = Path("data/raw/all_transactions.parquet")
 SEED         = 42
-MAX_SAMPLE   = 30_000
+MAX_SAMPLE   = 20_000  # uniform-by-transaction sample
 
 
 def main() -> None:
@@ -35,34 +35,19 @@ def main() -> None:
     df = pd.read_parquet(DATA_PATH)
     print(f"[retrain_l3] {len(df):,} transactions, {df['sender_account'].nunique():,} accounts")
 
-    # Sample normal transactions — capped at MAX_PER_ACCOUNT per sender to
-    # prevent a single hub account dominating and skewing the feature scaler.
-    MAX_PER_ACCOUNT = 20
-    normal_df = df[df["is_fraud"] == False].reset_index(drop=True)
-    rng = np.random.default_rng(SEED)
-
-    capped_parts = []
-    for _, grp in normal_df.groupby("sender_account"):
-        n = min(len(grp), MAX_PER_ACCOUNT)
-        capped_parts.append(grp.sample(n, random_state=SEED))
-    capped = pd.concat(capped_parts, ignore_index=True)
-    n_sample = min(MAX_SAMPLE, len(capped))
-    idx = rng.choice(len(capped), size=n_sample, replace=False)
-    sample_df = (
-        capped.iloc[idx]
-        .sort_values("timestamp")
-        .reset_index(drop=True)
-    )
-    top5 = sample_df["sender_account"].value_counts().head(3)
-    print(f"[retrain_l3] Sampled {len(sample_df):,} normal txns (capped {MAX_PER_ACCOUNT}/acct)")
-    print(f"[retrain_l3] Top-3 senders: {top5.to_dict()}")
-
+    # Pass the FULL stream. train_models_only replays every row in timestamp
+    # order to build true per-account rolling history, then fits on a
+    # per-account-capped sample of NORMAL transactions whose features were
+    # computed WITH that real history. Pre-capping before the replay (the old
+    # behaviour) gave every account near-empty history and inverted L3.
     t0 = time.time()
     summary = train_models_only(
-        sample_df      = sample_df,
-        graph_features = graph_features,
-        artifact_store = store,
-        seed           = SEED,
+        history_df       = df,
+        graph_features   = graph_features,
+        artifact_store   = store,
+        seed             = SEED,
+        feature_sample_n = MAX_SAMPLE,
+        max_per_account  = None,   # uniform-by-transaction (see _pick_sample_ids)
     )
     elapsed = time.time() - t0
 
