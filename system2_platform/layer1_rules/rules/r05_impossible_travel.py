@@ -12,7 +12,14 @@ def rule(
         return False, 0.0, ""
 
     dist = fv.geo_distance_km
-    score = 30.0 if dist > 5000 else 20.0
+    # Weights must stay in [0, 1] — engine normalises: (sum_weights / 12.2) * 100.
+    # WEIGHTS["R05"] = 0.9 is the ceiling; tier down for shorter displacements.
+    if dist > 5000:
+        score = 0.9   # intercontinental — very high confidence of account compromise
+    elif dist > 2000:
+        score = 0.75  # cross-country impossible travel
+    else:
+        score = 0.6   # sub-2000 km but still physically impossible given the gap
     return True, score, (
         f"R05: Impossible travel detected — {dist:.0f} km displacement "
         f"in too short a time (account compromise or proxy)"
