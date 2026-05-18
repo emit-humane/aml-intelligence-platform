@@ -37,6 +37,7 @@ from ..contracts.rule_engine_output import RuleEngineOutput
 from ..contracts.behavioral_anomaly_output import BehavioralAnomalyOutput
 from ..contracts.gnn_inference_output import GNNInferenceOutput
 from ..contracts.live_graph_feature_vector import LiveGraphFeatureVector
+from ..contracts.transaction_event import TransactionEvent
 
 # Minimum score to generate an alert (v2: calibrated to F1-optimal region;
 # recall≈0.96 at this point with the gnn-dominant fusion weights).
@@ -128,6 +129,7 @@ class AlertManager:
         behav_out: BehavioralAnomalyOutput,
         gnn_out: GNNInferenceOutput,
         gfv: Optional[LiveGraphFeatureVector] = None,
+        event: Optional[TransactionEvent] = None,
     ) -> Optional[Alert]:
         """
         Create an alert if the fused score exceeds the threshold.
@@ -138,6 +140,11 @@ class AlertManager:
 
         community_id = gfv.sender_community_id if gfv else -1
         group_score  = self._community_max_score(community_id, fused.transaction_risk_score)
+
+        # Serialize the original TransactionEvent for frontend display.
+        tx_details: dict | None = None
+        if event is not None:
+            tx_details = event.model_dump(mode="json")
 
         alert = Alert(
             transaction_id=fused.transaction_id,
@@ -153,6 +160,7 @@ class AlertManager:
             structural_anomaly_explanations=gnn_out.structural_anomaly_explanations,
             score_breakdown=fused.score_breakdown,
             explanation=fused.explanation,
+            transaction_details=tx_details,
         )
 
         with self._lock:

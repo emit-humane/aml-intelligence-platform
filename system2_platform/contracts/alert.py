@@ -24,6 +24,9 @@ class Alert(BaseModel):
     structural_anomaly_explanations: list[str]
     score_breakdown: dict[str, Any]
     explanation: str
+    # Full original transaction — stored at alert creation time so the UI can
+    # show amount, receiver, channel, geo, balance etc. without a second lookup.
+    transaction_details: dict[str, Any] | None = None
     alert_status: AlertStatus = "Open"
     assigned_to: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

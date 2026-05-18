@@ -136,7 +136,7 @@ class TransactionOrchestrator:
 
         # Layer P2: Alert
         alert: Optional[Alert] = self._alerts.maybe_create_alert(
-            fused, rule_out, behav_out, gnn_out, gfv
+            fused, rule_out, behav_out, gnn_out, gfv, event=event
         )
 
         return {
@@ -192,7 +192,7 @@ class TransactionOrchestrator:
             sender_account=event.sender_account,
         )
         alert: Optional[Alert] = self._alerts.maybe_create_alert(
-            fused, rule_out, behav_out, gnn_out, gfv
+            fused, rule_out, behav_out, gnn_out, gfv, event=event
         )
 
         return {

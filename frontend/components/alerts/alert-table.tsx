@@ -32,6 +32,9 @@ export function AlertTable({ alerts, loading }: Props) {
           <tr>
             <th className="py-3 px-4 text-left">Alert ID</th>
             <th className="py-3 px-4 text-left">Sender</th>
+            <th className="py-3 px-4 text-left">Receiver</th>
+            <th className="py-3 px-4 text-right">Amount</th>
+            <th className="py-3 px-4 text-left">Type</th>
             <th className="py-3 px-4 text-left">Risk</th>
             <th className="py-3 px-4 text-left">Patterns</th>
             <th className="py-3 px-4 text-left">Status</th>

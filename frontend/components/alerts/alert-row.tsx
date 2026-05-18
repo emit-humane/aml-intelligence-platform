@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { RiskBadge } from "./risk-badge";
-import { formatTimestamp, truncateId } from "@/lib/utils";
+import { formatTimestamp, truncateId, formatCurrency } from "@/lib/utils";
 import type { Alert } from "@/lib/types";
 
 interface Props {
@@ -10,6 +10,7 @@ interface Props {
 }
 
 export function AlertRow({ alert }: Props) {
+  const tx = alert.transaction_details;
   return (
     <tr className="border-b border-gray-800 hover:bg-gray-900 transition-colors">
       <td className="py-3 px-4">
@@ -20,8 +21,41 @@ export function AlertRow({ alert }: Props) {
           {truncateId(alert.alert_id)}
         </Link>
       </td>
-      <td className="py-3 px-4 font-mono text-xs text-gray-300">
-        {truncateId(alert.sender_account)}
+      <td className="py-3 px-4">
+        <div className="font-mono text-xs text-gray-300">{truncateId(alert.sender_account)}</div>
+        {tx && <div className="text-xs text-gray-600 mt-0.5">{tx.sender_bank} · {tx.sender_country}</div>}
+      </td>
+      <td className="py-3 px-4">
+        {tx ? (
+          <>
+            <div className="font-mono text-xs text-gray-300">{truncateId(tx.receiver_account)}</div>
+            <div className="text-xs text-gray-600 mt-0.5">{tx.receiver_bank} · {tx.receiver_country}</div>
+          </>
+        ) : (
+          <span className="text-xs text-gray-600">—</span>
+        )}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {tx ? (
+          <>
+            <div className="text-xs font-semibold text-gray-200">
+              {formatCurrency(tx.amount)}
+            </div>
+            <div className="text-xs text-gray-600">{tx.currency}</div>
+          </>
+        ) : (
+          <span className="text-xs text-gray-600">—</span>
+        )}
+      </td>
+      <td className="py-3 px-4">
+        {tx ? (
+          <>
+            <div className="text-xs text-gray-300">{tx.transaction_type}</div>
+            <div className="text-xs text-gray-600">{tx.payment_channel}</div>
+          </>
+        ) : (
+          <span className="text-xs text-gray-600">—</span>
+        )}
       </td>
       <td className="py-3 px-4">
         <RiskBadge level={alert.risk_level} score={alert.transaction_risk_score} />

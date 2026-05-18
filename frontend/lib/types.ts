@@ -52,6 +52,37 @@ export interface FusedRiskOutput {
   fusion_mode: string;
 }
 
+export interface TransactionDetails {
+  transaction_id: string;
+  timestamp: string;
+  sender_account: string;
+  receiver_account: string;
+  sender_name: string;
+  receiver_name: string;
+  sender_bank: string;
+  receiver_bank: string;
+  sender_country: string;
+  receiver_country: string;
+  amount: number;
+  currency: string;
+  transaction_type: string;
+  payment_channel: string;
+  device_id: string;
+  ip_address: string;
+  geo_latitude: number;
+  geo_longitude: number;
+  merchant_category: string;
+  transaction_status: string;
+  sender_balance_before: number;
+  sender_balance_after: number;
+  receiver_balance_before: number;
+  receiver_balance_after: number;
+  kyc_level: number;
+  is_international: boolean;
+  remarks: string;
+  amount_leading_digit: number;
+}
+
 export interface Alert {
   alert_id: string;
   transaction_id: string;
@@ -67,6 +98,7 @@ export interface Alert {
   structural_anomaly_explanations: string[];
   score_breakdown: Record<string, unknown>;
   explanation: string;
+  transaction_details: TransactionDetails | null;
   alert_status: AlertStatus;
   assigned_to: string | null;
   created_at: string;
