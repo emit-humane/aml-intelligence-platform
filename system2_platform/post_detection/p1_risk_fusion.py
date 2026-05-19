@@ -9,38 +9,41 @@ Combines outputs from:
 
 into a single FusedRiskOutput.
 
-Fusion formula (static weights, v3 — recalibrated after the Layer 3 fix):
+Fusion formula (static weights, v4 — recalibrated after the Level-2
+eval-harness ordering fix corrected behavioral's measured AUROC):
   transaction_risk_score = 0.02 x rule_score
-                         + 0.05 x behavioral_score
-                         + 0.91 x gnn_score
+                         + 0.18 x behavioral_score
+                         + 0.78 x gnn_score
                          + 0.02 x graph_boost
 
   Weights are calibrated to each detector's measured validation AUROC on the
-  System 3 scoring path (scripts/tune_fusion_weights.py, 418 fraud / 1036
-  normal):
-    gnn        AUROC=0.975 → dominant discriminator (highest weight)
-    behavioral AUROC=0.61  → secondary (note: behavioral is 0.996 under true
-                             timestamp-ordered streaming; the eval harness
-                             scores fraud/normal in separate non-chronological
-                             batches which degrades its rolling-window
-                             features — so it is weighted to its measured
-                             value on the reported path, with headroom)
-    rule       AUROC=0.39  → near-random, small floor for explainability
+  TRUE timestamp-ordered scoring path (scripts/replay_eval_ordered.py +
+  scripts/tune_fusion_weights.py, 418 fraud / 1036 normal):
+    gnn        AUROC=0.975 → strongest discriminator (highest weight)
+    behavioral AUROC=0.845 → now correctly measured. The old two-phase
+                             harness scored fraud/normal in separate
+                             non-chronological batches, corrupting the
+                             stateful rolling-window features and pinning
+                             behavioral at a false 0.61 (so v3 under-weighted
+                             it at 0.05). With true-order replay it is 0.845,
+                             earning real weight. (0.996 reported earlier was
+                             a behavioral-only isolation number that excluded
+                             the 7 graph dims the production ensemble uses.)
+    rule       AUROC=0.28  → near-random, small floor for explainability
     graph      AUROC=0.41  → near-random, small floor for ring context
-  Grid search over the weight simplex: this mix maximises fused validation
-  AUROC at 0.9754 (vs 0.9604 for the old v2 mix), and raises operating
-  precision from 0.78 → 0.93 at the F1-optimal threshold.
+  Grid search over the weight simplex: this mix gives fused validation
+  AUROC 0.9773 (vs 0.9754 v3 / 0.9604 v2) at P≈0.91, R≈0.90.
 
   graph_boost = community_risk_score (0–100, Z-score normalized) if available
 
   group_risk_score = max(transaction_risk_score across community, default = tx score)
 
-Risk levels (recalibrated to the v3 fused-score distribution;
-normals center ~39, fraud ~47, F1-optimal decision point ~44):
-  0–43    → Low       (no alert)
-  44–45   → Medium    (alert; F1-optimal zone, P≈0.93)
-  46–47   → High       (precision≈1.0 zone)
-  48–100  → Critical   (densest fraud zone)
+Risk levels (recalibrated to the v4 fused-score distribution;
+normals center ~40, fraud ~48, F1-optimal decision point ~45):
+  0–44    → Low       (no alert)
+  45–46   → Medium    (alert; F1-optimal zone, P≈0.91)
+  47–48   → High       (precision→1.0 zone)
+  49–100  → Critical   (densest fraud zone)
 """
 
 from __future__ import annotations
@@ -53,28 +56,26 @@ from ..contracts.gnn_inference_output import GNNInferenceOutput
 from ..contracts.live_graph_feature_vector import LiveGraphFeatureVector
 from ..contracts.fused_risk_output import FusedRiskOutput, RiskLevel
 
-# Static fusion weights, v3 — recalibrated to per-detector validation AUROC
-# on the System 3 scoring path after the Layer 3 behavioral fix
-# (scripts/tune_fusion_weights.py). GNN is by far the strongest
-# discriminator (AUROC 0.975) so it dominates; rule/graph are near-random
-# (AUROC ~0.4) so they keep only a small explainability/ring-context floor;
-# behavioral is weighted to its measured harness AUROC (0.61) — it is 0.996
-# under true streaming, so this is conservative.
+# Static fusion weights, v4 — recalibrated after scripts/replay_eval_ordered.py
+# fixed the eval-harness ordering bug. Behavioral's true measured AUROC is
+# 0.845 (the old batched harness pinned it at a false 0.61, so v3 starved it
+# at 0.05). GNN remains the strongest single detector (0.975) but behavioral
+# now earns real weight; rule/graph keep a small explainability/ring floor.
 _W_RULE  = 0.02
-_W_BEHAV = 0.05
-_W_GNN   = 0.91
+_W_BEHAV = 0.18
+_W_GNN   = 0.78
 _W_GRAPH = 0.02
 
 
 def _risk_level(score: float) -> RiskLevel:
-    # Bands recalibrated to the v3 fused-score distribution
-    # (normals center ~39, fraud ~47; F1-optimal decision point ~44,
-    # precision≈1.0 at ≥46).
-    if score < 44:
+    # Bands recalibrated to the v4 fused-score distribution
+    # (normals center ~40, fraud ~48; F1-optimal decision point ~45,
+    # precision≈1.0 at ≥49).
+    if score < 45:
         return "Low"
-    if score < 46:
+    if score < 47:
         return "Medium"
-    if score < 48:
+    if score < 49:
         return "High"
     return "Critical"
 

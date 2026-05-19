@@ -161,9 +161,10 @@ def main() -> None:
     # Recommended: prefer a robust point — among combos within 0.001 AUROC of
     # the max, pick the one keeping the smallest extreme weight (less overfit),
     # with a tiny rule+graph floor for explainability.
-    # FINAL chosen weights: gnn-heavy C — best explainable AUROC with small
-    # rule/graph floors retained for human-readable explanations + ring context.
-    rwr, rwb, rwg, rwgr = 0.02, 0.05, 0.91, 0.02
+    # FINAL chosen weights: v4 — behavioral now correctly measured (~0.85
+    # after the Level-2 ordering fix) so it earns real weight; small
+    # rule/graph floors retained for explanations + ring context.
+    rwr, rwb, rwg, rwgr = 0.02, 0.18, 0.78, 0.02
     ra = auroc(y, rwr*comp["rule"] + rwb*comp["behavioral"]
                + rwg*comp["gnn"] + rwgr*comp["graph_boost"])
     print(f"\n[tune] RECOMMENDED weights (robust, explainability floors):")
