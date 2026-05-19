@@ -1,245 +1,125 @@
 # ============================================================
 # send_demo_transactions.ps1
-# Posts 80 normal + 20 fraud transactions to the live API
-# Usage:  powershell -ExecutionPolicy Bypass -File .\scripts\send_demo_transactions.ps1
+# Posts REAL labeled transactions to the live API and shows the
+# fraud-vs-normal score separation.
+#
+# Why real rows (not fabricated ones): the scoring pipeline is
+# stateful + graph-based. The GNN (78% weight), graph_boost and the
+# behavioral rolling windows only have signal for accounts that exist
+# in the seeded history / offline graph and for timestamps in the
+# seeded era (2026-01 .. 2026-04). The previous version of this script
+# invented accounts (ACC_STRUCT_01, OFFSHR_01, ...) with 2024
+# timestamps, so the strong detectors were blind on the fraud rows and
+# fraud/normal scored the same. Sampling real rows from the actual
+# datasets fixes that.
+#
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File .\scripts\send_demo_transactions.ps1
+#   powershell -ExecutionPolicy Bypass -File .\scripts\send_demo_transactions.ps1 -BaseUrl http://localhost:8000 -Normal 60 -Fraud 20
 # ============================================================
 
-$URL   = "https://aml-intelligence-platform.onrender.com/stream/transaction"
-$HDR   = @{ "Content-Type" = "application/json" }
-$BANKS = @("SBI","HDFC","ICICI","AXIS","KOTAK","PNB")
-$ok      = 0
-$fail    = 0
-$flagged = 0
+param(
+    [string] $BaseUrl = "https://aml-intelligence-platform.onrender.com",
+    [int]    $Normal  = 60,
+    [int]    $Fraud   = 20,
+    [int]    $AlertThreshold = 57          # v5 calibrated alert threshold
+)
+
+$URL        = "$BaseUrl/stream/transaction"
+$HDR        = @{ "Content-Type" = "application/json" }
+$STREAM_CSV = Join-Path $PSScriptRoot "..\data\raw\stream_transactions.csv"
+$TRUTH_CSV  = Join-Path $PSScriptRoot "..\data\raw\hidden_ground_truth.csv"
+
+foreach ($p in @($STREAM_CSV, $TRUTH_CSV)) {
+    if (-not (Test-Path $p)) { Write-Host "Missing data file: $p" -ForegroundColor Red; exit 1 }
+}
+
+# Fields the API expects (StreamIngestion coerces types server-side)
+$COLS = @(
+    "transaction_id","timestamp","sender_account","receiver_account",
+    "sender_name","receiver_name","sender_bank","receiver_bank",
+    "sender_country","receiver_country","amount","currency",
+    "transaction_type","payment_channel","device_id","ip_address",
+    "geo_latitude","geo_longitude","merchant_category","transaction_status",
+    "sender_balance_before","sender_balance_after",
+    "receiver_balance_before","receiver_balance_after",
+    "kyc_level","is_international","remarks"
+)
+
+function To-Payload($row) {
+    $h = @{}
+    foreach ($c in $COLS) {
+        $v = $row.$c
+        switch -regex ($c) {
+            '^(amount|geo_latitude|geo_longitude|.*balance.*)$' { $h[$c] = [double]$v; break }
+            '^kyc_level$'        { $h[$c] = [int]$v; break }
+            '^is_international$'  { $h[$c] = ($v -eq "True" -or $v -eq "true" -or $v -eq "1"); break }
+            default              { $h[$c] = "$v" }
+        }
+    }
+    return $h
+}
 
 function Send-Tx($body) {
     try {
-        $resp = Invoke-RestMethod -Uri $URL -Method Post -Body ($body | ConvertTo-Json) -Headers $HDR
-        return $resp
-    } catch {
-        # Uncomment next 3 lines to print full server error:
-        # $s = $_.Exception.Response
-        # $r = [System.IO.StreamReader]::new($s.GetResponseStream())
-        # Write-Host "    SERVER: $($r.ReadToEnd())" -ForegroundColor DarkYellow
-        return $null
-    }
+        return Invoke-RestMethod -Uri $URL -Method Post -Body ($body | ConvertTo-Json) -Headers $HDR -TimeoutSec 60
+    } catch { return $null }
 }
 
-# Builds a fully-populated TransactionEvent hashtable.
-# All required Pydantic fields included — avoids 422/500 from missing fields.
-function New-Base {
-    param(
-        [string]$txId,
-        [string]$sender,
-        [string]$receiver,
-        [double]$amount,
-        [string]$ts,
-        [string]$type,
-        [string]$channel,
-        [string]$srcCountry = "IN",
-        [string]$dstCountry = "IN",
-        [bool]  $intl       = $false,
-        [int]   $kyc        = 2
-    )
-    $bal  = Get-Random -Min 200000 -Max 2000000
-    $rbal = Get-Random -Min 50000  -Max 1000000
-    return @{
-        transaction_id          = $txId
-        sender_account          = $sender
-        receiver_account        = $receiver
-        sender_name             = "User_$sender"
-        receiver_name           = "User_$receiver"
-        amount                  = $amount
-        currency                = "INR"
-        timestamp               = $ts
-        transaction_type        = $type
-        payment_channel         = $channel
-        sender_country          = $srcCountry
-        receiver_country        = $dstCountry
-        sender_bank             = $BANKS[(Get-Random -Min 0 -Max 6)]
-        receiver_bank           = $BANKS[(Get-Random -Min 0 -Max 6)]
-        transaction_status      = "Success"
-        is_international        = $intl
-        kyc_level               = $kyc
-        geo_latitude            = [math]::Round(8  + (Get-Random -Min 0 -Max 2700) / 100.0, 4)
-        geo_longitude           = [math]::Round(68 + (Get-Random -Min 0 -Max 2900) / 100.0, 4)
-        sender_balance_before   = [double]$bal
-        sender_balance_after    = [double]($bal - $amount)
-        receiver_balance_before = [double]$rbal
-        receiver_balance_after  = [double]($rbal + $amount)
-        device_id               = ""
-        ip_address              = ""
-        remarks                 = ""
-        merchant_category       = ""
-    }
-}
+# ── Build the labeled sample ─────────────────────────────────────────────────
+$truthIds = @{}
+Import-Csv $TRUTH_CSV | ForEach-Object { $truthIds[$_.transaction_id] = $true }
 
-# ── 80 NORMAL ─────────────────────────────────────────────────────────────────
-Write-Host "`n=== Sending 80 NORMAL transactions ===" -ForegroundColor Cyan
+$fraudRows  = Import-Csv $TRUTH_CSV | Get-Random -Count $Fraud
+$normalRows = Import-Csv $STREAM_CSV |
+    Where-Object { -not $truthIds.ContainsKey($_.transaction_id) } |
+    Get-Random -Count $Normal
 
-1..80 | ForEach-Object {
-    $i    = $_
-    $s    = "ACC{0:D6}" -f (Get-Random -Min 1 -Max 3000)
-    $r    = "ACC{0:D6}" -f (Get-Random -Min 1 -Max 3000)
-    $amt  = Get-Random -Min 500 -Max 49999
-    $hr   = "{0:D2}" -f (Get-Random -Min 8 -Max 20)
-    $mn   = "{0:D2}" -f (Get-Random -Min 0 -Max 59)
-    $type = @("NEFT","IMPS","UPI","RTGS")[(Get-Random -Min 0 -Max 4)]
-    $ch   = @("Web","Mobile","Branch","ATM")[(Get-Random -Min 0 -Max 4)]
+$normScores  = New-Object System.Collections.ArrayList
+$fraudScores = New-Object System.Collections.ArrayList
+$ok = 0; $fail = 0
 
-    $tx   = New-Base -txId    ("NRM{0:D5}" -f $i) `
-                     -sender   $s `
-                     -receiver $r `
-                     -amount   $amt `
-                     -ts       "2024-06-15T${hr}:${mn}:00Z" `
-                     -type     $type `
-                     -channel  $ch
-
-    $resp = Send-Tx $tx
+Write-Host "`n=== $Normal NORMAL transactions (real, seeded accounts) ===" -ForegroundColor Cyan
+foreach ($row in $normalRows) {
+    $resp = Send-Tx (To-Payload $row)
     if ($resp) {
-        $ok++
-        if ($resp.transaction_risk_score -ge 31) { $flagged++ }
-        $col = if ($resp.transaction_risk_score -ge 31) { "Yellow" } else { "Green" }
-        $ruleNames = $resp.rule_out.triggered_rules -join ", "
-        Write-Host ("  N{0:D3}  score={1,3}  patterns={2}  rules=[{3}]" -f `
-            $i, $resp.transaction_risk_score, $resp.triggered_patterns.Count, $ruleNames) `
+        $ok++; [void]$normScores.Add([double]$resp.transaction_risk_score)
+        $col = if ($resp.transaction_risk_score -ge $AlertThreshold) { "Yellow" } else { "Green" }
+        Write-Host ("  {0}  score={1,6:N1}  {2}" -f `
+            $row.transaction_id, $resp.transaction_risk_score, $resp.risk_level) -ForegroundColor $col
+    } else { $fail++; Write-Host "  $($row.transaction_id)  FAILED" -ForegroundColor Red }
+}
+
+Write-Host "`n=== $Fraud FRAUD transactions (ground truth) ===" -ForegroundColor Cyan
+foreach ($row in $fraudRows) {
+    $resp = Send-Tx (To-Payload $row)
+    if ($resp) {
+        $ok++; [void]$fraudScores.Add([double]$resp.transaction_risk_score)
+        $col = if ($resp.transaction_risk_score -ge $AlertThreshold) { "Red" } else { "DarkYellow" }
+        Write-Host ("  {0}  score={1,6:N1}  {2}  [{3}]" -f `
+            $row.transaction_id, $resp.transaction_risk_score, $resp.risk_level, $row.synthetic_pattern_type) `
             -ForegroundColor $col
-    } else {
-        $fail++
-        Write-Host "  N$i  FAILED" -ForegroundColor Red
-    }
+    } else { $fail++; Write-Host "  $($row.transaction_id)  FAILED" -ForegroundColor Red }
 }
 
-# ── 20 FRAUD (4 typologies × 5) ───────────────────────────────────────────────
-Write-Host "`n=== Sending 20 FRAUD transactions (4 typologies x5) ===" -ForegroundColor Cyan
-
-# ── [1/4] STRUCTURING ─ 5 × ~499K, same sender, 5 consecutive hours ──────────
-Write-Host "`n[1/4] Structuring  (ACC_STRUCT_01 sends 5x ~499K in 5 hrs)" -ForegroundColor Magenta
-1..5 | ForEach-Object {
-    $i   = $_
-    $amt = 499000 + (Get-Random -Min 0 -Max 999)
-    $rec = "ACC{0:D6}" -f (Get-Random -Min 4000 -Max 4999)
-    $hr  = "{0:D2}" -f (6 + $i)          # 07:00 → 11:00 — build velocity
-
-    $tx  = New-Base -txId    ("STRUCT{0:D3}" -f $i) `
-                    -sender   "ACC_STRUCT_01" `
-                    -receiver $rec `
-                    -amount   $amt `
-                    -ts       "2024-06-15T${hr}:15:00Z" `
-                    -type     "NEFT" `
-                    -channel  "Web" `
-                    -kyc      1
-
-    $resp = Send-Tx $tx
-    if ($resp) {
-        $ok++; $flagged++
-        $ruleNames = $resp.rule_out.triggered_rules -join ", "
-        Write-Host ("  STRUCT{0:D3}  amt={1}  score={2,3}  rules=[{3}]" -f `
-            $i, $amt, $resp.transaction_risk_score, $ruleNames) -ForegroundColor Red
-    } else {
-        $fail++
-        Write-Host "  STRUCT$i  FAILED" -ForegroundColor DarkRed
-    }
+# ── Separation summary ───────────────────────────────────────────────────────
+function Stat($arr) {
+    if ($arr.Count -eq 0) { return @{ n=0; mean=0; med=0 } }
+    $s = $arr | Sort-Object
+    $mean = ($arr | Measure-Object -Average).Average
+    $med  = $s[[int][math]::Floor($s.Count/2)]
+    return @{ n=$arr.Count; mean=$mean; med=$med }
 }
+$ns = Stat $normScores; $fs = Stat $fraudScores
+$nFlag = ($normScores  | Where-Object { $_ -ge $AlertThreshold }).Count
+$fFlag = ($fraudScores | Where-Object { $_ -ge $AlertThreshold }).Count
 
-# ── [2/4] LARGE WIRE ─ 5 × >5M INR, cross-border, high-risk country ──────────
-Write-Host "`n[2/4] Large Wire   (5x >5M INR to high-risk countries)" -ForegroundColor Magenta
-$hiRisk = @("PK","AE","NG","KE","CN")
-1..5 | ForEach-Object {
-    $i   = $_
-    $amt = 5000000 + (Get-Random -Min 0 -Max 4000000)
-    $dst = $hiRisk[$i - 1]
-    $hr  = "{0:D2}" -f (10 + $i)         # 11:00 → 15:00
-
-    $tx  = New-Base -txId    ("WIRE{0:D3}" -f $i) `
-                    -sender   ("ACC_WIRE_{0:D2}" -f $i) `
-                    -receiver ("OFFSHR_{0:D2}"   -f $i) `
-                    -amount   $amt `
-                    -ts       "2024-06-15T${hr}:30:00Z" `
-                    -type     "Wire" `
-                    -channel  "Web" `
-                    -srcCountry "IN" `
-                    -dstCountry $dst `
-                    -intl     $true `
-                    -kyc      1
-    $tx.sender_bank   = "AXIS"
-    $tx.receiver_bank = "FOREIGN_BANK"
-
-    $resp = Send-Tx $tx
-    if ($resp) {
-        $ok++; $flagged++
-        $ruleNames = $resp.rule_out.triggered_rules -join ", "
-        Write-Host ("  WIRE{0:D3}  amt={1}  dst={2}  score={3,3}  rules=[{4}]" -f `
-            $i, $amt, $dst, $resp.transaction_risk_score, $ruleNames) -ForegroundColor Red
-    } else {
-        $fail++
-        Write-Host "  WIRE$i  FAILED" -ForegroundColor DarkRed
-    }
-}
-
-# ── [3/4] FAN-IN ─ 5 different senders all funnelling into one collector ──────
-Write-Host "`n[3/4] Fan-In       (5 senders -> ACC_COLLECT_01)" -ForegroundColor Magenta
-1..5 | ForEach-Object {
-    $i   = $_
-    $amt = 150000 + (Get-Random -Min 0 -Max 99999)
-    $mn  = "{0:D2}" -f ($i * 10)
-
-    $tx  = New-Base -txId    ("FANIN{0:D3}" -f $i) `
-                    -sender   ("ACC_FAN_{0:D2}" -f $i) `
-                    -receiver "ACC_COLLECT_01" `
-                    -amount   $amt `
-                    -ts       "2024-06-15T14:${mn}:00Z" `
-                    -type     "RTGS" `
-                    -channel  "Web" `
-                    -kyc      1
-    $tx.receiver_bank = "KOTAK"
-
-    $resp = Send-Tx $tx
-    if ($resp) {
-        $ok++; $flagged++
-        $ruleNames = $resp.rule_out.triggered_rules -join ", "
-        Write-Host ("  FANIN{0:D3}  amt={1}  score={2,3}  rules=[{3}]" -f `
-            $i, $amt, $resp.transaction_risk_score, $ruleNames) -ForegroundColor Red
-    } else {
-        $fail++
-        Write-Host "  FANIN$i  FAILED" -ForegroundColor DarkRed
-    }
-}
-
-# ── [4/4] LAYERING CHAIN ─ A→B→C→D→E with round 2M INR amounts ───────────────
-Write-Host "`n[4/4] Layering Chain  (A->B->C->D->E, round 2M amounts)" -ForegroundColor Magenta
-$chain = @("ACC_CH_A","ACC_CH_B","ACC_CH_C","ACC_CH_D","ACC_CH_E","ACC_CH_EXIT")
-0..4 | ForEach-Object {
-    $i   = $_
-    $src = $chain[$i]
-    $dst = $chain[$i + 1]
-    $amt = 2000000 - ($i * 50000)
-    $mn  = "{0:D2}" -f ($i * 10)
-
-    $tx  = New-Base -txId    ("CHAIN{0:D3}" -f ($i + 1)) `
-                    -sender   $src `
-                    -receiver $dst `
-                    -amount   $amt `
-                    -ts       "2024-06-15T15:${mn}:00Z" `
-                    -type     "NEFT" `
-                    -channel  "Web" `
-                    -kyc      0
-    $tx.sender_bank   = "ICICI"
-    $tx.receiver_bank = "HDFC"
-
-    $resp = Send-Tx $tx
-    if ($resp) {
-        $ok++; $flagged++
-        $ruleNames = $resp.rule_out.triggered_rules -join ", "
-        Write-Host ("  CHAIN{0:D3}  {1}->{2}  amt={3}  score={4,3}  rules=[{5}]" -f `
-            ($i + 1), $src, $dst, $amt, $resp.transaction_risk_score, $ruleNames) -ForegroundColor Red
-    } else {
-        $fail++
-        Write-Host "  CHAIN$($i + 1)  FAILED" -ForegroundColor DarkRed
-    }
-}
-
-# ── SUMMARY ───────────────────────────────────────────────────────────────────
-Write-Host "`n$("=" * 57)" -ForegroundColor Cyan
-Write-Host ("DONE   sent={0}   failed={1}   flagged={2}/{0}" -f $ok, $fail, $flagged) -ForegroundColor White
-$normalFlagged = $flagged - ($ok - 80)
-Write-Host ("       normals flagged ~{0}/80    fraud flagged ~{1}/20" -f $normalFlagged, ($ok - 80)) -ForegroundColor White
+Write-Host "`n$("=" * 60)" -ForegroundColor Cyan
+Write-Host ("sent={0} failed={1}   alert threshold={2}" -f $ok, $fail, $AlertThreshold) -ForegroundColor White
+Write-Host ("NORMAL  n={0,3}  mean={1,6:N1}  median={2,6:N1}  alerted={3}/{0}" -f `
+    $ns.n, $ns.mean, $ns.med, $nFlag) -ForegroundColor Green
+Write-Host ("FRAUD   n={0,3}  mean={1,6:N1}  median={2,6:N1}  alerted={3}/{0}" -f `
+    $fs.n, $fs.mean, $fs.med, $fFlag) -ForegroundColor Red
+Write-Host ("SEPARATION  fraud median - normal median = {0:N1} / 100" -f `
+    ($fs.med - $ns.med)) -ForegroundColor White
+Write-Host ("(calibrated score = P(fraud)*100; expect normal ~0-20, fraud ~85-99)") -ForegroundColor DarkGray
