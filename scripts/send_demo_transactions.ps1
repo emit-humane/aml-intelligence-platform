@@ -22,7 +22,7 @@ param(
     [string] $BaseUrl = "https://aml-intelligence-platform.onrender.com",
     [int]    $Normal  = 60,
     [int]    $Fraud   = 20,
-    [int]    $AlertThreshold = 57          # v5 calibrated alert threshold
+    [int]    $AlertThreshold = 45          # v4 alert threshold (graded raw score)
 )
 
 $URL        = "$BaseUrl/stream/transaction"
@@ -122,4 +122,5 @@ Write-Host ("FRAUD   n={0,3}  mean={1,6:N1}  median={2,6:N1}  alerted={3}/{0}" -
     $fs.n, $fs.mean, $fs.med, $fFlag) -ForegroundColor Red
 Write-Host ("SEPARATION  fraud median - normal median = {0:N1} / 100" -f `
     ($fs.med - $ns.med)) -ForegroundColor White
-Write-Host ("(calibrated score = P(fraud)*100; expect normal ~0-20, fraud ~85-99)") -ForegroundColor DarkGray
+Write-Host ("(graded 0-100 risk score: normals cluster ~35-45, fraud ~46-50;") -ForegroundColor DarkGray
+Write-Host (" ranking AUROC ~0.977 — a spectrum of suspicion, not a binary split)") -ForegroundColor DarkGray
