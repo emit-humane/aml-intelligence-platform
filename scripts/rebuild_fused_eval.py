@@ -33,7 +33,7 @@ from pathlib import Path
 import pandas as pd
 
 from system2_platform.post_detection.p1_risk_fusion import (
-    _W_RULE, _W_BEHAV, _W_GNN, _W_GRAPH, _risk_level,
+    _W_RULE, _W_BEHAV, _W_GNN, _W_GRAPH, _risk_level, _calibrate,
 )
 from system2_platform.post_detection.p2_alert_manager import _ALERT_THRESHOLD
 
@@ -43,13 +43,16 @@ OUT_ALERTS   = Path("data/evaluation/generated_alerts.csv")
 
 
 def _fuse(rule: float, behav: float, gnn: float, graph: float) -> float:
+    """Identical to p1_risk_fusion.fuse(): weighted sum -> logistic calibration."""
     s = _W_RULE * rule + _W_BEHAV * behav + _W_GNN * gnn + _W_GRAPH * graph
-    return float(min(max(s, 0.0), 100.0))
+    s = float(min(max(s, 0.0), 100.0))
+    return float(min(max(_calibrate(s), 0.0), 100.0))
 
 
 def main() -> None:
-    print(f"[rebuild] v3 weights: rule={_W_RULE} behav={_W_BEHAV} "
-          f"gnn={_W_GNN} graph={_W_GRAPH}  alert_thr={_ALERT_THRESHOLD}")
+    print(f"[rebuild] weights rule={_W_RULE} behav={_W_BEHAV} "
+          f"gnn={_W_GNN} graph={_W_GRAPH}  +logistic calibration  "
+          f"alert_thr={_ALERT_THRESHOLD}")
 
     # ── Fraud ────────────────────────────────────────────────────────────────
     fr = pd.read_csv(FRAUD_CSV)

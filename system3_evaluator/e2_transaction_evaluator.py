@@ -4,7 +4,7 @@ E2 — Transaction-Level Classification Metrics.
 Computes the full suite required for a serious AML evaluation:
   precision, recall, f1_macro, minority_class_f1, pr_auc, roc_auc,
   false_positive_rate, false_negative_rate, total_alerts,
-  TP, FP, FN, TN — at the operational threshold (45.0, v4-calibrated) and
+  TP, FP, FN, TN — at the operational threshold (57.0, v5 calibrated-scale) and
   at the best-F1 threshold found by sweeping 0–100.
 
 Also sweeps thresholds 0–100 (step 1) for the PR curve.
@@ -19,7 +19,7 @@ import pandas as pd
 def evaluate_transactions(
     joined: pd.DataFrame,
     score_col: str = "y_score",
-    default_threshold: float = 45.0,
+    default_threshold: float = 57.0,
     thresholds: list[float] | None = None,
 ) -> dict:
     """
@@ -29,7 +29,7 @@ def evaluate_transactions(
     ----------
     joined            : output of e1_joiner.build_and_save() or join()
     score_col         : continuous risk score column (default 'y_score')
-    default_threshold : operational alert threshold (default 45.0, v4-calibrated)
+    default_threshold : operational alert threshold (default 57.0, v5 calibrated-scale)
     thresholds        : optional override; default sweeps 0-100 step 1
 
     Returns

@@ -38,16 +38,25 @@ eval-harness ordering fix corrected behavioral's measured AUROC):
 
   group_risk_score = max(transaction_risk_score across community, default = tx score)
 
-Risk levels (recalibrated to the v4 fused-score distribution;
-normals center ~40, fraud ~48, F1-optimal decision point ~45):
-  0–44    → Low       (no alert)
-  45–46   → Medium    (alert; F1-optimal zone, P≈0.91)
-  47–48   → High       (precision→1.0 zone)
-  49–100  → Critical   (densest fraud zone)
+Score calibration (v5): the raw weighted sum ranks near-perfectly
+(AUROC 0.977) but is crushed into a ~28–51 band, so fraud (~48) and normal
+(~41) looked almost identical. A monotone logistic map
+  transaction_risk_score = 100 * sigmoid(_CAL_A * raw + _CAL_B)
+spreads it onto the full 0–100 scale (fraud median ~94, normal ~0.5) without
+changing ranking/AUROC. The raw weighted sum is kept in
+score_breakdown["raw_weighted"]. See scripts/fit_score_calibration.py.
+
+Risk levels (on the CALIBRATED scale ≈ P(fraud)*100;
+normal median ~0.5, fraud median ~94, F1-optimal decision point 57):
+  0–56     → Low       (no alert)
+  57–79    → Medium    (alert; F1-optimal zone, P≈0.92)
+  80–94    → High       (high-precision zone)
+  95–100   → Critical   (precision≈1.0)
 """
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 from ..contracts.rule_engine_output import RuleEngineOutput
@@ -66,16 +75,33 @@ _W_BEHAV = 0.18
 _W_GNN   = 0.78
 _W_GRAPH = 0.02
 
+# Score calibration (Platt / logistic), fit on the validation set by
+# scripts/fit_score_calibration.py. The raw weighted sum discriminates
+# near-perfectly by RANK (AUROC 0.977) but is crushed into a ~28-51 band
+# (the dominant GNN component only spans ~25-50), so fraud (~48) and normal
+# (~41) look almost identical. This monotone map spreads the score onto the
+# full 0-100 range and makes it read as a calibrated fraud probability:
+#   calibrated = 100 * sigmoid(_CAL_A * raw + _CAL_B)
+# Monotone => AUROC/ranking is EXACTLY preserved (0.977 unchanged); only the
+# scale changes (fraud median ~94, normal median ~0.5). The calibrated=50
+# decision point corresponds to raw≈45.4 (the old v4 raw threshold).
+_CAL_A = 1.118790
+_CAL_B = -50.834839
+
+
+def _calibrate(raw: float) -> float:
+    """Logistic spread of the raw weighted sum -> calibrated 0-100 risk."""
+    return 100.0 / (1.0 + math.exp(-(_CAL_A * raw + _CAL_B)))
+
 
 def _risk_level(score: float) -> RiskLevel:
-    # Bands recalibrated to the v4 fused-score distribution
-    # (normals center ~40, fraud ~48; F1-optimal decision point ~45,
-    # precision≈1.0 at ≥49).
-    if score < 45:
+    # Bands on the CALIBRATED scale (≈ P(fraud)*100): normal median ~0.5,
+    # fraud median ~94. F1-optimal decision point = 57; precision ≈1.0 at ≥95.
+    if score < 57:
         return "Low"
-    if score < 47:
+    if score < 80:
         return "Medium"
-    if score < 49:
+    if score < 95:
         return "High"
     return "Critical"
 
@@ -106,13 +132,16 @@ class RiskFusion:
             if gfv.edge_creates_cycle:
                 graph_boost = min(100.0, graph_boost + 20.0)
 
-        tx_score = (
+        raw_weighted = (
             _W_RULE  * rule_out.rule_score
             + _W_BEHAV * behav_out.ensemble_anomaly_score
             + _W_GNN   * gnn_out.gnn_anomaly_score
             + _W_GRAPH * graph_boost
         )
-        tx_score = float(min(max(tx_score, 0.0), 100.0))
+        raw_weighted = float(min(max(raw_weighted, 0.0), 100.0))
+        # Logistic calibration: spread the compressed raw band onto the full
+        # 0-100 scale (monotone -> ranking/AUROC unchanged). See _calibrate.
+        tx_score = float(min(max(_calibrate(raw_weighted), 0.0), 100.0))
 
         # Group score: same as tx_score for single-transaction view
         # (the alert manager aggregates across communities separately)
@@ -127,12 +156,14 @@ class RiskFusion:
         if gfv is not None and gfv.edge_creates_cycle:
             patterns.append("cycle_closure")
 
-        # Score breakdown
+        # Score breakdown (raw_weighted retained for transparency/debug —
+        # transaction_risk_score is the calibrated value)
         breakdown = {
-            "rule":        round(rule_out.rule_score, 2),
-            "behavioral":  round(behav_out.ensemble_anomaly_score, 2),
-            "gnn":         round(gnn_out.gnn_anomaly_score, 2),
-            "graph_boost": round(graph_boost, 2),
+            "rule":         round(rule_out.rule_score, 2),
+            "behavioral":   round(behav_out.ensemble_anomaly_score, 2),
+            "gnn":          round(gnn_out.gnn_anomaly_score, 2),
+            "graph_boost":  round(graph_boost, 2),
+            "raw_weighted": round(raw_weighted, 2),
             "weights": {
                 "rule": _W_RULE, "behavioral": _W_BEHAV,
                 "gnn": _W_GNN,   "graph": _W_GRAPH,
