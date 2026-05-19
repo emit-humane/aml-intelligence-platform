@@ -231,10 +231,12 @@ def _train_autoencoder(
     epochs: int = 50,
     lr: float = 1e-3,
     batch_size: int = 256,
+    weight_decay: float = 1e-5,
 ) -> BehavioralAutoencoder:
     device = torch.device("cpu")
     model = BehavioralAutoencoder(input_dim=INPUT_DIM).to(device)
-    optimiser = torch.optim.Adam(model.parameters(), lr=lr)
+    optimiser = torch.optim.Adam(model.parameters(), lr=lr,
+                                 weight_decay=weight_decay)
     loss_fn = nn.MSELoss()
 
     tensor = torch.tensor(X_train, dtype=torch.float32)
@@ -257,6 +259,96 @@ def _train_autoencoder(
             print(f"[L3A]   Epoch {epoch+1:3d}/{epochs}  loss={avg:.6f}")
 
     return model
+
+
+def _fit_detectors(
+    X_scaled: np.ndarray,
+    artifact_store: ArtifactStore,
+    seed: int,
+    epochs: int,
+    max_train_rows: int,
+    rng: np.random.Generator,
+) -> dict:
+    """
+    Fit IsoForest + LOF + AE on a TRAIN split and calibrate the LOF/AE score
+    mappings on a held-out NORMAL VALIDATION split.
+
+    Why a held-out split: the AE threshold/score mapping must be computed on
+    data the AE did NOT memorise. Previously the 95th-pct recon threshold was
+    taken on X_train itself, so it was artificially tiny and every inference
+    point (normal AND fraud) exceeded 2x it -> ae_score pegged at 100 for
+    everyone (AUROC 0.50). Computing recon-error percentiles on held-out
+    normal makes "normal-median recon -> 0, normal-p95 recon -> 100" a
+    meaningful graded scale. Same idea calibrates the LOF mapping.
+
+    Saves: isolation_forest, lof_model, autoencoder, autoencoder_threshold
+    (legacy float = val p95), autoencoder_norm_stats (dict), lof_norm_stats.
+    """
+    n = len(X_scaled)
+    perm = rng.permutation(n)
+    n_val = max(1, int(0.20 * n))
+    val_idx, tr_idx = perm[:n_val], perm[n_val:]
+    X_val = X_scaled[val_idx]                       # held-out NORMAL
+    X_tr_full = X_scaled[tr_idx]
+    if len(X_tr_full) > max_train_rows:
+        sel = rng.choice(len(X_tr_full), size=max_train_rows, replace=False)
+        X_tr = X_tr_full[sel]
+    else:
+        X_tr = X_tr_full
+    print(f"[L3A.fit] train={len(X_tr):,}  held-out-val(normal)={len(X_val):,}")
+
+    # ── IsolationForest (already strong — unchanged) ──────────────────────────
+    t0 = time.time()
+    iso = IsolationForest(n_estimators=200, contamination=0.01,
+                          random_state=seed, n_jobs=-1)
+    iso.fit(X_tr)
+    artifact_store.save("isolation_forest", iso)
+    print(f"[L3A.fit] IsoForest done in {time.time()-t0:.1f}s")
+
+    # ── LOF: larger neighbourhood (was 30 -> too local; dense fraud rings
+    #    looked 'normal' so LOF inverted, AUROC 0.11). 50 gives a more global
+    #    density estimate. ────────────────────────────────────────────────────
+    t0 = time.time()
+    lof = LocalOutlierFactor(n_neighbors=50, novelty=True,
+                             contamination=0.01, n_jobs=-1)
+    lof.fit(X_tr)
+    artifact_store.save("lof_model", lof)
+    lof_val = lof.score_samples(X_val)              # more negative = anomalous
+    lof_stats = {
+        "p50": float(np.percentile(lof_val, 50)),
+        "p05": float(np.percentile(lof_val, 5)),
+    }
+    artifact_store.save("lof_norm_stats", lof_stats)
+    print(f"[L3A.fit] LOF(n=50) done in {time.time()-t0:.1f}s  "
+          f"val p50={lof_stats['p50']:.3f} p05={lof_stats['p05']:.3f}")
+
+    # ── Autoencoder: more epochs + weight decay; stats on HELD-OUT normal ─────
+    t0 = time.time()
+    ae = _train_autoencoder(X_tr, epochs=epochs, lr=1e-3,
+                            batch_size=256, weight_decay=1e-5)
+    artifact_store.save_torch("autoencoder", ae.state_dict())
+    ae.eval()
+    with torch.no_grad():
+        rec_val = ae.reconstruction_error(
+            torch.tensor(X_val, dtype=torch.float32)).numpy()
+    ae_stats = {
+        "p50": float(np.percentile(rec_val, 50)),
+        "p95": float(np.percentile(rec_val, 95)),
+        "mean": float(np.mean(rec_val)),
+        "std": float(np.std(rec_val)),
+    }
+    artifact_store.save("autoencoder_norm_stats", ae_stats)
+    artifact_store.save("autoencoder_threshold", ae_stats["p95"])  # legacy
+    print(f"[L3A.fit] AE done in {time.time()-t0:.1f}s  "
+          f"val recon p50={ae_stats['p50']:.5f} p95={ae_stats['p95']:.5f}")
+
+    return {
+        "feature_dim": INPUT_DIM,
+        "train_rows": len(X_tr),
+        "val_rows": len(X_val),
+        "autoencoder_norm_stats": ae_stats,
+        "lof_norm_stats": lof_stats,
+    }
 
 
 def train(
@@ -352,66 +444,24 @@ def train(
     artifact_store.save("feature_columns", feature_names)
 
     # ---------------------------------------------------------------
-    # 7. Train models
+    # 7. Train detectors (train/val split; LOF/AE calibrated on held-out
+    #    normal — see _fit_detectors)
     # ---------------------------------------------------------------
-    # Sample to _MAX_TRAIN_ROWS for sklearn models (they don't scale as well)
-    if len(X_scaled) > _MAX_TRAIN_ROWS:
-        idx = rng.choice(len(X_scaled), size=_MAX_TRAIN_ROWS, replace=False)
-        X_train = X_scaled[idx]
-    else:
-        X_train = X_scaled
-
-    print(f"[L3A] Training IsolationForest on {len(X_train):,} rows...")
-    t0 = time.time()
-    iso = IsolationForest(
-        n_estimators=200,
-        contamination=0.01,
-        random_state=seed,
-        n_jobs=-1,
+    det = _fit_detectors(
+        X_scaled, artifact_store, seed=seed, epochs=150,
+        max_train_rows=_MAX_TRAIN_ROWS, rng=rng,
     )
-    iso.fit(X_train)
-    artifact_store.save("isolation_forest", iso)
-    print(f"[L3A] IsolationForest done in {time.time()-t0:.1f}s")
-
-    print(f"[L3A] Training LocalOutlierFactor on {len(X_train):,} rows...")
-    t0 = time.time()
-    lof = LocalOutlierFactor(
-        n_neighbors=30,
-        novelty=True,
-        contamination=0.01,
-        n_jobs=-1,
-    )
-    lof.fit(X_train)
-    artifact_store.save("lof_model", lof)
-    print(f"[L3A] LOF done in {time.time()-t0:.1f}s")
-
-    print(f"[L3A] Training Autoencoder ({INPUT_DIM}->32->16->32->{INPUT_DIM}) "
-          f"for 50 epochs on {len(X_train):,} rows...")
-    t0 = time.time()
-    autoencoder = _train_autoencoder(X_train, epochs=50, lr=1e-3, batch_size=256)
-    artifact_store.save_torch("autoencoder", autoencoder.state_dict())
-    print(f"[L3A] Autoencoder done in {time.time()-t0:.1f}s")
-
-    # ---------------------------------------------------------------
-    # 8. Summary
-    # ---------------------------------------------------------------
-    # Reconstruction error threshold (95th percentile on training set)
-    autoencoder.eval()
-    with torch.no_grad():
-        t = torch.tensor(X_train, dtype=torch.float32)
-        errors = autoencoder.reconstruction_error(t).numpy()
-    threshold_95 = float(np.percentile(errors, 95))
-    artifact_store.save("autoencoder_threshold", threshold_95)
-    print(f"[L3A] Autoencoder recon error 95th pct (normal) = {threshold_95:.6f}")
 
     summary = {
         "n_transactions": len(df),
         "n_accounts": df["sender_account"].nunique(),
         "n_communities": len(community_profiles),
         "n_suspicious_paths": len(suspicious_paths),
-        "feature_dim": INPUT_DIM,
-        "train_rows": len(X_train),
-        "autoencoder_threshold_95": threshold_95,
+        "feature_dim": det["feature_dim"],
+        "train_rows": det["train_rows"],
+        "val_rows": det["val_rows"],
+        "autoencoder_norm_stats": det["autoencoder_norm_stats"],
+        "lof_norm_stats": det["lof_norm_stats"],
     }
     print("[L3A] Training complete:", summary)
     return summary
@@ -427,8 +477,9 @@ def train_models_only(
     graph_features: pd.DataFrame,
     artifact_store: ArtifactStore,
     seed: int = 42,
-    epochs: int = 50,
-    max_train_rows: int = _MAX_TRAIN_ROWS,
+    epochs: int = 150,                       # AE needs more epochs to learn
+    max_train_rows: int = _MAX_TRAIN_ROWS,   # the normal manifold (was 50 ->
+                                             # underfit -> recon saturated)
     feature_sample_n: int = _MAX_FEATURE_ROWS,
     max_per_account: int | None = None,
 ) -> dict:
@@ -474,42 +525,14 @@ def train_models_only(
     artifact_store.save("scaler_behavioral", scaler)
     artifact_store.save("feature_columns", feature_names)
 
-    if len(X_scaled) > max_train_rows:
-        idx = rng.choice(len(X_scaled), size=max_train_rows, replace=False)
-        X_train = X_scaled[idx]
-    else:
-        X_train = X_scaled
-
-    print(f"[L3A.models_only] Training IsolationForest on {len(X_train):,} rows...")
-    t0 = time.time()
-    iso = IsolationForest(n_estimators=200, contamination=0.01, random_state=seed, n_jobs=-1)
-    iso.fit(X_train)
-    artifact_store.save("isolation_forest", iso)
-    print(f"[L3A.models_only] IsoForest done in {time.time()-t0:.1f}s")
-
-    print(f"[L3A.models_only] Training LocalOutlierFactor on {len(X_train):,} rows...")
-    t0 = time.time()
-    lof = LocalOutlierFactor(n_neighbors=30, novelty=True, contamination=0.01, n_jobs=-1)
-    lof.fit(X_train)
-    artifact_store.save("lof_model", lof)
-    print(f"[L3A.models_only] LOF done in {time.time()-t0:.1f}s")
-
-    print(f"[L3A.models_only] Training Autoencoder for {epochs} epochs...")
-    t0 = time.time()
-    autoencoder = _train_autoencoder(X_train, epochs=epochs, lr=1e-3, batch_size=256)
-    artifact_store.save_torch("autoencoder", autoencoder.state_dict())
-    print(f"[L3A.models_only] Autoencoder done in {time.time()-t0:.1f}s")
-
-    autoencoder.eval()
-    with torch.no_grad():
-        t = torch.tensor(X_train, dtype=torch.float32)
-        errors = autoencoder.reconstruction_error(t).numpy()
-    threshold_95 = float(np.percentile(errors, 95))
-    artifact_store.save("autoencoder_threshold", threshold_95)
-    print(f"[L3A.models_only] AE threshold (95th pct normal) = {threshold_95:.6f}")
-
+    summary = _fit_detectors(
+        X_scaled, artifact_store, seed=seed, epochs=epochs,
+        max_train_rows=max_train_rows, rng=rng,
+    )
     return {
-        "feature_dim":             INPUT_DIM,
-        "train_rows":              len(X_train),
-        "autoencoder_threshold_95": threshold_95,
+        "feature_dim":             summary["feature_dim"],
+        "train_rows":              summary["train_rows"],
+        "val_rows":                summary["val_rows"],
+        "autoencoder_norm_stats":  summary["autoencoder_norm_stats"],
+        "lof_norm_stats":          summary["lof_norm_stats"],
     }
